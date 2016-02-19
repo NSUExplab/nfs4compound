@@ -1,0 +1,3 @@
+umount dir/
+rmmod fstar.ko
+make clean

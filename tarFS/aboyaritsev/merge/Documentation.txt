@@ -1,0 +1,10 @@
+The most difficult thing of reading code is enough confusing name of function... It is shame for me:(
+But it general confusing of all function, so i try to explain it.
+
+All functions that are aimed on returning of file are passed the argument of pointer to disk position.
+So indeed, this functions return not a file, but in disk_position argument is put all info of file:
+-Blocks that contain meta info of file.
+-first_block on disk of such block.
+-offset in first block -- to get the first byte of meta info of file.
+-last_fill_buffer_index -- is last index of buffers array, but, I am repeating, it is last block, that 
+contain meta info.

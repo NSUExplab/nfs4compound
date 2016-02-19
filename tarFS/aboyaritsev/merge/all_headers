@@ -1,0 +1,12 @@
+#include<linux/string.h>
+#include<linux/pagemap.h>
+#include<linux/stat.h>
+#include<linux/kernel.h>
+#include<linux/dcache.h>
+#include<linux/uidgid.h>
+#include<linux/module.h>
+#include<linux/init.h>
+#include<linux/slab.h>
+#include<linux/fs.h>
+#include<linux/kallsyms.h>
+#include<linux/buffer_head.h> 
