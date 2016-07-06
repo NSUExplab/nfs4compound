@@ -681,6 +681,7 @@ static int nfs_return_delegation(struct inode *inode)
 static const struct inode_operations nfs_dir_inode_operations = {
 	.create		= nfs_create,
 	.lookup		= nfs_lookup,
+	.chain_lookup = nfs_chain_lookup,	
 	.link		= nfs_link,
 	.unlink		= nfs_unlink,
 	.symlink	= nfs_symlink,
