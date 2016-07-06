@@ -387,6 +387,19 @@ struct nfs_open_confirmres {
 };
 
 /*
+ * Arguments to the open_compound call.
+ */
+struct nfs4_open_compound_args {
+	struct nfs_openargs,
+	struct nfs4_lookup_args
+};
+
+struct nfs4_open_compound_res {
+	struct nfs_openres,
+	struct nfs4_lookup_res
+};
+
+/*
  * Arguments to the close call.
  */
 struct nfs_closeargs {
