@@ -3213,12 +3213,14 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 	error = path_init(dfd, pathname->name, flags | LOOKUP_PARENT, nd, &base);
 	if (unlikely(error))
 		goto out;
-
+	
+	nd->flags |= LOOKUP_NOTLAST;
 	current->total_link_count = 0;
 	error = link_path_walk(pathname->name, nd);
 	if (unlikely(error))
 		goto out;
 
+	nd->flags &= ~LOOKUP_NOTLAST;
 	error = do_last(nd, &path, file, op, &opened, pathname);
 	while (unlikely(error > 0)) { /* trailing symlink */
 		struct path link = path;
