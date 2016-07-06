@@ -1867,7 +1867,8 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 			return 0;
 
 		name += len;
-
+		if(nd->inode->i_op->chain_lookup != NULL) 
+			printk("NFS Inode: %d", nd->inode->i_no);
 		err = walk_component(nd, &next, LOOKUP_FOLLOW);
 		if (err < 0)
 			return err;
