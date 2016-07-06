@@ -75,6 +75,7 @@
 #define NFS4_POLL_RETRY_MAX	(15*HZ)
 
 struct nfs4_opendata;
+struct nfs4_open_compound_instance* head_oc_instance;
 static int _nfs4_proc_open(struct nfs4_opendata *data);
 static int _nfs4_recover_proc_open(struct nfs4_opendata *data);
 static int nfs4_do_fsinfo(struct nfs_server *, struct nfs_fh *, struct nfs_fsinfo *);
@@ -1905,11 +1906,19 @@ static int nfs4_run_open_task(struct nfs4_opendata *data, int isrecover)
 	struct nfs_server *server = NFS_SERVER(dir);
 	struct nfs_openargs *o_arg = &data->o_arg;
 	struct nfs_openres *o_res = &data->o_res;
+	struct nfs4_open_compound_args *oc_arg = {
+		.o_arg = o_arg,
+		.l_arg = l_arg
+	};
+	strcut nfs4_open_compound_res *oc_res = {
+		.o_res = o_res,
+		.l_res = l_res
+	};
 	struct rpc_task *task;
 	struct rpc_message msg = {
-		.rpc_proc = &nfs4_procedures[NFSPROC4_CLNT_OPEN],
-		.rpc_argp = o_arg,
-		.rpc_resp = o_res,
+		.rpc_proc = &nfs4_procedures[NFSPROC4_CLNT_OPEN_COMPOUND],
+		.rpc_argp = oc_arg,
+		.rpc_resp = oc_res,
 		.rpc_cred = data->owner->so_cred,
 	};
 	struct rpc_task_setup task_setup_data = {
@@ -1922,7 +1931,7 @@ static int nfs4_run_open_task(struct nfs4_opendata *data, int isrecover)
 	};
 	int status;
 
-	nfs4_init_sequence(&o_arg->seq_args, &o_res->seq_res, 1);
+	nfs4_init_sequence(&oc_arg->seq_args, &oc_res->seq_res, 1);
 	kref_get(&data->kref);
 	data->rpc_done = 0;
 	data->rpc_status = 0;
@@ -3354,6 +3363,26 @@ out:
 		rpc_shutdown_client(client);
 
 	return err;
+}
+
+struct nfs4_open_compund_instance* oc_get_instance(){
+	struct list_head* position = NULL;
+	struct nfs4_open_compund_instance* oc_instance = NULL;
+	list_for_each(position, &head_oc_instance->head){
+		oc_instance = list_entry(position, struct nfs4_open_compund_instance, head);
+		if(current->pid == oc_instance->pid) 
+			return oc_instance;
+	}
+	oc_instance = kmalloc(sizeof(struct nfs4_open_compund_instance), GFP_KERNEL);
+	oc_instance->pid = current->pid;
+	if(head_oc_instance == NULL){
+		head_oc_instance = oc_instance;
+		INIT_LIST_HEAD(&head_oc_instance->head);
+	}
+	else{
+		list_add(&oc_instance->head, &head_oc_instance->head);
+	}
+	return oc_instance;
 }
 
 static int nfs4_proc_lookup(struct inode *dir, struct qstr *name,

@@ -387,19 +387,6 @@ struct nfs_open_confirmres {
 };
 
 /*
- * Arguments to the open_compound call.
- */
-struct nfs4_open_compound_args {
-	struct nfs_openargs,
-	struct nfs4_lookup_args
-};
-
-struct nfs4_open_compound_res {
-	struct nfs_openres,
-	struct nfs4_lookup_res
-};
-
-/*
  * Arguments to the close call.
  */
 struct nfs_closeargs {
@@ -944,6 +931,34 @@ struct nfs4_lookup_res {
 	struct nfs_fattr *		fattr;
 	struct nfs_fh *			fh;
 	struct nfs4_label		*label;
+};
+
+/*
+ * Arguments to the open_compound call.
+ */
+struct nfs4_open_compound_instance{
+	pid_t pid;
+	struct nfs4_open_compound_args* args;
+	struct list_head head;
+};
+
+struct oc_name{
+	const struct qstr* name;
+	struct list_head head;
+}
+
+struct nfs4_open_compound_args {
+	struct nfs4_sequence_args seq_args;
+	const struct nfs_fh* dir_fh;
+	const struct oc_name* oc_names;
+	const u32* bitmask;
+	struct nfs_openargs* o_args;
+};
+
+struct nfs4_open_compound_res {
+	struct nfs4_sequence_res seq_res;
+	struct nfs_openres* o_res;
+	struct nfs4_lookup_res* l_res;
 };
 
 struct nfs4_lookup_root_arg {
