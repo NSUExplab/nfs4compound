@@ -1427,6 +1427,12 @@ out:
 }
 EXPORT_SYMBOL_GPL(nfs_lookup);
 
+int nfs_chain_lookup(struct inode *dir, struct dentry * dentry, unsigned int flags)
+{
+	return 0;
+}
+EXPORT_SYMBOL_GPL(nfs_chain_lookup);
+
 #if IS_ENABLED(CONFIG_NFS_V4)
 static int nfs4_lookup_revalidate(struct dentry *, unsigned int);
 
