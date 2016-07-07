@@ -8490,6 +8490,7 @@ const struct nfs4_minor_version_ops *nfs_v4_minor_ops[] = {
 static const struct inode_operations nfs4_dir_inode_operations = {
 	.create		= nfs_create,
 	.lookup		= nfs_lookup,
+	.chain_lookup = nfs_chain_lookup,
 	.atomic_open	= nfs_atomic_open,
 	.link		= nfs_link,
 	.unlink		= nfs_unlink,
