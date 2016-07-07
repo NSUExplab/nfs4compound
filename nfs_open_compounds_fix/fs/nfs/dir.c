@@ -1427,9 +1427,95 @@ out:
 }
 EXPORT_SYMBOL_GPL(nfs_lookup);
 
-int nfs_chain_lookup(struct inode *dir, struct dentry * dentry, unsigned int flags)
+struct lookup_path{
+	struct qstr * this;
+	struct list_head list;
+}
+int nfs_chain_lookup(const char *name, struct nameidata *nd)
 {
+	struct lookup_path head;
+	struct dentry cache_dentry;
+	
+	INIT_LIST_HEAD(&head.list);
+	for(;;){
+		struct qstr this;
+		long len;
+		int type;
+		
+		err = may_lookup(nd);
+ 		if (err)
+			break;
+		
+		len = hash_name(name, &this.hash);
+		this.name = name;
+		this.len = len;
+
+		type = LAST_NORM;
+		if (name[0] == '.') switch (len) {
+			case 2:
+				if (name[1] == '.') {
+					type = LAST_DOTDOT;
+					nd->flags |= LOOKUP_JUMPED;
+				}
+				break;
+			case 1:
+				type = LAST_DOT;
+		}
+		if (likely(type == LAST_NORM)) {
+			struct dentry *parent = nd->path.dentry;
+			nd->flags &= ~LOOKUP_JUMPED;
+			if (unlikely(parent->d_flags & DCACHE_OP_HASH)) {
+				err = parent->d_op->d_hash(parent, &this);
+				if (err < 0)
+					break;
+			}
+		}
+
+		nd->last = this;
+		nd->last_type = type;
+		
+		if (!name[len])
+			goto rpc_call;
+		
+		
+		do {
+			len++;
+		} while (unlikely(name[len] == '/'));
+		if (!name[len])
+			goto rpc_call;
+		
+		name += len;
+		
+		cache_dentry = d_lookup(nd->path.dentry, this);
+		if(cahce_dentry){
+			nd->path.dentry = cache_dentry;
+			//nd->path.mnt = mnt_real(cache_dentry);
+			continue;
+		}
+		struct lookup_path * path = kmalloc(sizeof(struct lookup_path), GFP_KERNEL);
+		path->this = this;
+		list_add_tail(&path->list, &head.list);
+	}
+	
+rpc_call:
+	fhandle = nfs_alloc_fhandle();
+    fattr = nfs_alloc_fattr();
+	if (fhandle == NULL || fattr == NULL)
+		goto out;
+	label = nfs4_label_alloc(NFS_SERVER(dir), GFP_NOWAIT);
+	if (IS_ERR(label))
+		goto out;	
+	parent = dentry->d_parent;
+	trace_nfs_lookup_enter(dir, dentry, flags);
+	nfs_block_sillyrename(parent);
+	error = NFS_PROTO(dir)->chain_lookup(dir, head, fhandle, fattr, label);
+	nfs_free_fattr(fattr);
+	nfs_free_fhandle(fhandle);
 	return 0;
+out:
+	nfs_free_fattr(fattr);
+	nfs_free_fhandle(fhandle);
+	return -1;
 }
 EXPORT_SYMBOL_GPL(nfs_chain_lookup);
 
