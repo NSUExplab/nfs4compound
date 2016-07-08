@@ -22,8 +22,6 @@ struct nameidata {
 	char *saved_names[MAX_NESTED_LINKS + 1];
 };
 
-};
-
 /*
  * Type of the last component on LOOKUP_PARENT
  */
