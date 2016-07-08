@@ -3371,9 +3371,9 @@ static int nfs4_proc_lookup(struct inode *dir, struct qstr *name,
 	return status;
 }
 
-static int nfs4_proc_chain_lookup(struct inode *dir, struct lookup_path *head,
-			    struct nfs_fh_list *fh_list, struct nfs_fattr *fattr,
-			    struct nfs4_label *label){	
+static int nfs4_proc_chain_lookup(struct inode *dir, struct list_head *dchain_list,
+			    struct nfs_fh ** fhandles, struct nfs_fattr *fattr,
+			    struct nfs4_label *label, int size){	
 	int status;
 	struct rpc_clnt *client = NFS_CLIENT(dir);
 	struct nfs_server *server = NFS_SERVER(dir);
@@ -3382,14 +3382,14 @@ static int nfs4_proc_chain_lookup(struct inode *dir, struct lookup_path *head,
 	struct nfs4_chain_lookup_arg args = {
 		.bitmask = server->attr_bitmask,
 		.dir_fh = NFS_FH(dir),
-		.head = head
+		.dchain_list = dchain_list
 	};
 	struct nfs4_chain_lookup_res res = {
 		.server = server,
 		.fattr = fattr,
-		.count = head->count,
+		.size = size,
 		.label = label,
-		.fh_head = fh_list	
+		.fhandles = fhandles	
 	};
 
 	struct rpc_message msg = {

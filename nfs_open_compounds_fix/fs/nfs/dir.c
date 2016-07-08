@@ -1427,37 +1427,60 @@ out:
 }
 EXPORT_SYMBOL_GPL(nfs_lookup);
 
-int nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_list)
+struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_list, int size)
 {
-	cache_dentry = d_lookup(nd->path.dentry, this);
-		if(cahce_dentry){
-			nd->path.dentry = cache_dentry;
-			//nd->path.mnt = mnt_real(cache_dentry);
-			continue;
-		}
+	int i = 0;
+	struct nfs_fh **fhandles = kmalloc(sizeof(struct nfs_fh*) * size, GFP_KERNEL);
+	struct inode *inode;
+	struct nfs_fattr *fattr = NULL;
+	struct nfs4_label *label = NULL;
+	struct dentry *parent = nd->path.dentry;
+	struct dentry *res = parent;
+	struct list_head* cur_pos;
+	struct chain_dentry* dchain_entry;
 
-	struct lookup_path * path = kmalloc(sizeof(struct lookup_path), GFP_KERNEL);
-	path->this = this;
-	list_add_tail(&path->list, &head.list);
-rpc_call:
-	fhandle = nfs_alloc_fhandle();
+	for(i = 0; i < size; i++){
+		fhandles[i] = nfs_alloc_fhandle();
+		if (fhandles[i] == NULL)
+			goto out;
+	}
+	
     fattr = nfs_alloc_fattr();
-	if (fhandle == NULL || fattr == NULL)
+	if(!fattr)
 		goto out;
 	label = nfs4_label_alloc(NFS_SERVER(dir), GFP_NOWAIT);
 	if (IS_ERR(label))
 		goto out;	
-	parent = dentry->d_parent;
-	trace_nfs_lookup_enter(dir, dentry, flags);
 	nfs_block_sillyrename(parent);
-	error = NFS_PROTO(dir)->chain_lookup(dir, head, fhandle, fattr, label);
-	nfs_free_fattr(fattr);
-	nfs_free_fhandle(fhandle);
-	return 0;
+	error = NFS_PROTO(dir)->chain_lookup(dir, dchain_list, fhandles, fattr, label, size);
+	if (error == -ENOENT)
+		goto no_entry;
+	if (error < 0) {
+		res = ERR_PTR(error);
+		goto out_unblock_sillyrename;
+	}
+	i = 0;
+	list_for_each(cur_pos, dchain_list){
+		dchain_entry = list_entry(pos, struct nfs_fh_list, list);
+		res = dchain_entry->dentry;
+		inode = nfs_fhget(parent->d_sb, fhandles[i], fattr, label);
+		i++;
+		res = ERR_CAST(inode);
+		if (IS_ERR(res))
+			goto out_unblock_sillyrename;
+		res = d_materialise_unique(res, inode);
+		if (res != NULL) {
+		if (IS_ERR(res))
+			goto out_unblock_sillyrename;
+		dchain_entry->dentry = res;
+	}
+out_unblock_sillyrename:
+	nfs_unblock_sillyrename(parent);
+	nfs4_label_free(label);
 out:
 	nfs_free_fattr(fattr);
 	nfs_free_fhandle(fhandle);
-	return -1;
+	return res;
 }
 EXPORT_SYMBOL_GPL(nfs_chain_lookup);
 

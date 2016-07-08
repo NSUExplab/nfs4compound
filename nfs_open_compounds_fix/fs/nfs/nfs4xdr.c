@@ -2128,15 +2128,15 @@ static void nfs4_xdr_enc_chain_lookup(struct rpc_rqst *req, struct xdr_stream *x
 	struct compound_hdr hdr = {
 		.minorversion = nfs4_xdr_minorversion(&args->seq_args),
 	};
-	struct list_head* pos;
-	struct lookup_path* tmp;
+	struct list_head* cur_pos;
+	struct chain_dentry* cur_dentry;
 	
 	encode_compound_hdr(xdr, req, &hdr);
 	encode_sequence(xdr, &args->seq_args, &hdr);
 	encode_putfh(xdr, args->dir_fh, &hdr);
-	list_for_each(pos, &args->head->list){
-		tmp = list_entry(pos, struct lookup_path, list);
-		encode_lookup(xdr, tmp->this, &hdr);
+	list_for_each(cur_pos, &args->dchain_list->list){
+		cur_dentry = list_entry(cur_pos, struct chain_dentry, list);
+		encode_lookup(xdr, cur_dentry->dentry->name, &hdr);
 	}
 	encode_getfh(xdr, &hdr);
 	encode_getfattr(xdr, args->bitmask, &hdr);
@@ -6051,7 +6051,7 @@ out:
  * Decode LOOKUP response
  */
 static int nfs4_xdr_dec_lookup(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
-			       struct nfs4_chain_lookup_res *res)
+			       struct nfs4_lookup_res *res)
 {
 	struct compound_hdr hdr;
 	int status;
@@ -6093,12 +6093,11 @@ static int nfs4_xdr_dec_chain_lookup(struct rpc_rqst *rqstp, struct xdr_stream *
 	status = decode_putfh(xdr);
 	if (status)
 		goto out;
-	list_for_each(pos, &res->fh_list->list){
-		tmp = list_entry(pos, struct nfs_fh_list, list);
+	for(i = 0; i < res->size; i++){
 		status = decode_lookup(xdr);
 		if (status)
 			goto out;
-		status = decode_getfh(xdr, tmp->fhandle);
+		status = decode_getfh(xdr, res->fhandles[i]);
 		if (status)
 			goto out;
 	}
