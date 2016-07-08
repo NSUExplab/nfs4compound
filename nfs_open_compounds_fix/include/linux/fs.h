@@ -1658,7 +1658,7 @@ struct file_operations_extend {
 struct inode_operations {
 	struct dentry * (*lookup) (struct inode *,struct dentry *, unsigned int);
 	
-	int (*chain_lookup) (struct inode *,struct dentry *, unsigned int);
+	int (*chain_lookup) (const char *, struct nameidata *);
 
 	void * (*follow_link) (struct dentry *, struct nameidata *);
 	int (*permission) (struct inode *, int);
