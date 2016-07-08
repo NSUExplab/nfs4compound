@@ -1798,6 +1798,84 @@ static inline unsigned long hash_name(const char *name, unsigned int *hashp)
 
 #endif
 
+static inline int walk_chain(const char *name, struct nameidata *nd)
+{
+	LIST_HEAD(dchain_list);
+	struct dentry *current_dentry = nd->path.dentry;
+	struct inode *first_inode = nd->inode;
+
+	int err;
+
+	for(;;){
+		struct qstr this;
+		long len;
+		int type;
+		
+		/* all access rights will be permitted later
+		/  this version work without access rights
+		/  err = may_lookup(nd);
+ 		/  if (err)
+		/	break;
+		 */
+
+		len = hash_name(name, &this.hash);
+		this.name = name;
+		this.len = len;
+
+		type = LAST_NORM;
+		/*if (name[0] == '.') switch (len) {
+			case 2:
+				if (name[1] == '.') {
+					type = LAST_DOTDOT;
+					nd->flags |= LOOKUP_JUMPED;
+				}
+				break;
+			case 1:
+				type = LAST_DOT;
+		}
+		if (likely(type == LAST_NORM)) {
+			struct dentry *parent = nd->path.dentry;
+			nd->flags &= ~LOOKUP_JUMPED;
+			if (unlikely(parent->d_flags & DCACHE_OP_HASH)) {
+				err = parent->d_op->d_hash(parent, &this);
+				if (err < 0)
+					break;
+			}
+		}*/
+		nd->flags &= ~LOOKUP_JUMPED;
+
+		nd->last = this;
+		nd->last_type = type;
+		
+		if (!name[len])
+			goto rpc_call;
+		
+		
+		do {
+			len++;
+		} while (unlikely(name[len] == '/'));
+		if (!name[len])
+			goto rpc_call;
+		
+		name += len;
+
+		//
+		//err = lookup_fast(nd, )
+		if(current_dentry){
+			current_dentry = d_lookup(current_dentry, this);
+			if(!current_dentry)
+				nd->path.dentry = current_dentry;
+			continue;
+		}
+
+		struct chain_dentry * new_chain = kmalloc(sizeof(struct chain_dentry), GFP_KERNEL);
+		new_chain->name = this;
+		list_add_tail(new_chain, dchain_list);
+	}
+
+	first_inode->i_op->chain_lookup(nd, &dchain_list);
+}
+
 /*
  * Name resolution.
  * This is the basic name resolution function, turning a pathname into
@@ -1867,14 +1945,12 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 			return 0;
 
 		name += len;
-		if(nd->inode->i_op->chain_lookup != NULL){ 
-			err = nd->inode->i_op->chain_lookup(name, nd);
-			if(err < 0)
-				return err;
-			return 0;
-		}
-		else
+
+		if(nd->inode->i_op->chain_lookup){ 
+			return walk_chain(name, nd);
+		} else
 			err = walk_component(nd, &next, LOOKUP_FOLLOW);
+
 		if (err < 0)
 			return err;
 

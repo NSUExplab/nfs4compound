@@ -22,6 +22,11 @@ struct nameidata {
 	char *saved_names[MAX_NESTED_LINKS + 1];
 };
 
+struct chain_dentry{
+	struct qstr *name;
+	struct list_head list;
+};
+
 /*
  * Type of the last component on LOOKUP_PARENT
  */
