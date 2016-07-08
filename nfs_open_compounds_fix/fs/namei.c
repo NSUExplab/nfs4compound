@@ -1801,10 +1801,14 @@ static inline unsigned long hash_name(const char *name, unsigned int *hashp)
 static inline int walk_chain(const char *name, struct nameidata *nd)
 {
 	LIST_HEAD(dchain_list);
-	struct dentry *current_dentry = nd->path.dentry;
+	struct list_head *pos;
+
+	struct dentry *dcurrent = nd->path.dentry;
 	struct inode *first_inode = nd->inode;
 
-	int err;
+	bool is_found_work = TRUE;
+	int err = 0;
+	int dentry_count = 0;
 
 	for(;;){
 		struct qstr this;
@@ -1848,32 +1852,42 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 		nd->last_type = type;
 		
 		if (!name[len])
-			goto rpc_call;
-		
-		
+			break;
+			
 		do {
 			len++;
 		} while (unlikely(name[len] == '/'));
 		if (!name[len])
-			goto rpc_call;
+			break;
 		
 		name += len;
 
 		//
 		//err = lookup_fast(nd, )
-		if(current_dentry){
-			current_dentry = d_lookup(current_dentry, this);
-			if(!current_dentry)
-				nd->path.dentry = current_dentry;
-			continue;
+		if(is_found_work) {
+			dcurrent = d_lookup(dcurrent, this);
+			if(dcurrent){
+				nd->path.dentry = dcurrent;
+				continue;
+			} else {
+				is_found_work = FALSE;
+				dcurrent = nd->path.dentry;
+			}
 		}
 
 		struct chain_dentry * new_chain = kmalloc(sizeof(struct chain_dentry), GFP_KERNEL);
-		new_chain->name = this;
+		dcurrent = new_chain->dentry = d_alloc(dcurrent, this);
 		list_add_tail(new_chain, dchain_list);
+		dentry_count++;
 	}
 
-	first_inode->i_op->chain_lookup(nd, &dchain_list);
+	first_inode->i_op->chain_lookup(nd, &dchain_list, dentry_count);
+	
+	list_for_each(pos, &dchain_list){
+		list_del(pos);
+	}
+
+	return err;
 }
 
 /*
@@ -1932,10 +1946,9 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		nd->last = this;
 		nd->last_type = type;
 
-		if (!name[len])
+		dcurrent (!name[len])
 			return 0;
-		/*
-		 * If it wasn't NUL, we know it was '/'. Skip that
+		/*dcurrentf it wasn't NUL, we know it was '/'. Skip that
 		 * slash, and continue until no more slashes.
 		 */
 		do {

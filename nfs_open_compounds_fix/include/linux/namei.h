@@ -23,7 +23,7 @@ struct nameidata {
 };
 
 struct chain_dentry{
-	struct qstr *name;
+	struct dentry *dentry;
 	struct list_head list;
 };
 
