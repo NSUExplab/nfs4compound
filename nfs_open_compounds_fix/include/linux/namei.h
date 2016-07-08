@@ -22,9 +22,6 @@ struct nameidata {
 	char *saved_names[MAX_NESTED_LINKS + 1];
 };
 
-struct chain_dentry{
-	struct dentry *dentry;
-	struct list_head list;
 };
 
 /*
