@@ -2134,11 +2134,11 @@ static void nfs4_xdr_enc_chain_lookup(struct rpc_rqst *req, struct xdr_stream *x
 	encode_compound_hdr(xdr, req, &hdr);
 	encode_sequence(xdr, &args->seq_args, &hdr);
 	encode_putfh(xdr, args->dir_fh, &hdr);
-	list_for_each(cur_pos, &args->dchain_list->list){
+	list_for_each(cur_pos, args->dchain_list){
 		cur_dentry = list_entry(cur_pos, struct chain_dentry, list);
-		encode_lookup(xdr, cur_dentry->dentry->name, &hdr);
+		encode_lookup(xdr, &cur_dentry->dentry->d_name, &hdr);
+		encode_getfh(xdr, &hdr);
 	}
-	encode_getfh(xdr, &hdr);
 	encode_getfattr(xdr, args->bitmask, &hdr);
 	encode_nops(&hdr);
 }
@@ -6079,8 +6079,6 @@ out:
 static int nfs4_xdr_dec_chain_lookup(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
 			       struct nfs4_chain_lookup_res *res)
 {
-	struct list_head* pos;
-	struct lookup_path* tmp;
 	struct compound_hdr hdr;
 	int status, i = 0;
 

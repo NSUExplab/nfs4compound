@@ -1429,7 +1429,7 @@ EXPORT_SYMBOL_GPL(nfs_lookup);
 
 struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_list, int size)
 {
-	int i = 0;
+	int error = 0, i = 0;
 	struct nfs_fh **fhandles = kmalloc(sizeof(struct nfs_fh*) * size, GFP_KERNEL);
 	struct inode *inode;
 	struct nfs_fattr *fattr = NULL;
@@ -1437,6 +1437,7 @@ struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_
 	struct dentry *parent = nd->path.dentry;
 	struct dentry *res = parent;
 	struct list_head* cur_pos;
+	struct inode* dir = parent->d_inode;
 	struct chain_dentry* dchain_entry;
 
 	for(i = 0; i < size; i++){
@@ -1454,14 +1455,14 @@ struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_
 	nfs_block_sillyrename(parent);
 	error = NFS_PROTO(dir)->chain_lookup(dir, dchain_list, fhandles, fattr, label, size);
 	if (error == -ENOENT)
-		goto no_entry;
+		goto out; // NO ENTRY!!
 	if (error < 0) {
 		res = ERR_PTR(error);
 		goto out_unblock_sillyrename;
 	}
 	i = 0;
 	list_for_each(cur_pos, dchain_list){
-		dchain_entry = list_entry(pos, struct nfs_fh_list, list);
+		dchain_entry = list_entry(cur_pos, struct chain_dentry, list);
 		res = dchain_entry->dentry;
 		inode = nfs_fhget(parent->d_sb, fhandles[i], fattr, label);
 		i++;
@@ -1470,16 +1471,20 @@ struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_
 			goto out_unblock_sillyrename;
 		res = d_materialise_unique(res, inode);
 		if (res != NULL) {
-		if (IS_ERR(res))
-			goto out_unblock_sillyrename;
-		dchain_entry->dentry = res;
+			if (IS_ERR(res))
+				goto out_unblock_sillyrename;
+			dchain_entry->dentry = res;
+		}
 	}
 out_unblock_sillyrename:
 	nfs_unblock_sillyrename(parent);
 	nfs4_label_free(label);
 out:
 	nfs_free_fattr(fattr);
-	nfs_free_fhandle(fhandle);
+	for(i = 0; i < size; i++){
+		nfs_free_fhandle(fhandles[i]);
+	}	
+	kfree(fhandles);
 	return res;
 }
 EXPORT_SYMBOL_GPL(nfs_chain_lookup);

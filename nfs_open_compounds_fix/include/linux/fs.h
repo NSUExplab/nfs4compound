@@ -1651,14 +1651,17 @@ struct file_operations_extend {
 	struct file_operations kabi_fops;
 	void (*mremap)(struct file *, struct vm_area_struct *);
 };
-
+struct chain_dentry{
+	struct dentry *dentry;
+	struct list_head list;
+};
 #define to_fop_extend(fop)	\
 	container_of((fop), struct file_operations_extend, kabi_fops)
 
 struct inode_operations {
 	struct dentry * (*lookup) (struct inode *,struct dentry *, unsigned int);
 	
-	int (*chain_lookup) (const char *, struct nameidata *);
+	struct dentry * (*chain_lookup) (struct nameidata *, struct list_head *, int size);
 
 	void * (*follow_link) (struct dentry *, struct nameidata *);
 	int (*permission) (struct inode *, int);
