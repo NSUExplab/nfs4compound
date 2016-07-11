@@ -1804,14 +1804,14 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 	struct list_head *pos;
 
 	struct dentry *dcurrent = nd->path.dentry;
-	struct inode *first_inode = nd->inode;
+//	struct inode *first_inode = nd->inode;
 	struct chain_dentry * new_chain;
 	int is_found_work = 1;
 	int err = 0;
+	struct qstr this = nd->last;
 	int dentry_count = 0;
-
+	
 	for(;;){
-		struct qstr this;
 		long len;
 		int type;
 		
@@ -1821,7 +1821,24 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
  		/  if (err)
 		/	break;
 		 */
-
+		printk(KERN_ALERT "NFS name: %s\n", this.name);
+		
+		if(is_found_work) {
+			dcurrent = d_lookup(dcurrent, &this);
+			if(dcurrent){
+				nd->path.dentry = dcurrent;
+			} else {
+				is_found_work = 0;
+				dcurrent = nd->path.dentry;
+			}
+		}
+		else{
+			new_chain = kmalloc(sizeof(struct chain_dentry), GFP_KERNEL);
+			dcurrent = new_chain->dentry = d_alloc(dcurrent, &this);
+			list_add_tail(&new_chain->list, &dchain_list);
+			dentry_count++;
+		}
+		
 		len = hash_name(name, &this.hash);
 		this.name = name;
 		this.len = len;
@@ -1864,30 +1881,18 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 
 		//
 		//err = lookup_fast(nd, )
-		if(is_found_work) {
-			dcurrent = d_lookup(dcurrent, &this);
-			if(dcurrent){
-				nd->path.dentry = dcurrent;
-				continue;
-			} else {
-				is_found_work = 0;
-				dcurrent = nd->path.dentry;
-			}
-		}
 
-		new_chain = kmalloc(sizeof(struct chain_dentry), GFP_KERNEL);
-		dcurrent = new_chain->dentry = d_alloc(dcurrent, &this);
-		list_add_tail(&new_chain->list, &dchain_list);
-		dentry_count++;
 	}
 
-	first_inode->i_op->chain_lookup(nd, &dchain_list, dentry_count);
+//	first_inode->i_op->chain_lookup(nd, &dchain_list, dentry_count);
 	
 	list_for_each(pos, &dchain_list){
-		kfree(list_entry(pos, struct chain_dentry, list));
-		list_del(pos);
+		new_chain = list_entry(pos, struct chain_dentry, list);
+		printk(KERN_ALERT "NFS chain inst: %s\n", new_chain->dentry->d_name.name);
+	//	kfree(new_chain);
+	//	list_del(pos);
 	}
-
+	err = -ENOENT;
 	return err;
 }
 
@@ -1914,11 +1919,11 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		struct qstr this;
 		long len;
 		int type;
-
+		
 		err = may_lookup(nd);
  		if (err)
 			break;
-
+	
 		len = hash_name(name, &this.hash);
 		this.name = name;
 		this.len = len;
@@ -1946,7 +1951,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 
 		nd->last = this;
 		nd->last_type = type;
-
+		
 		if (!name[len])
 			return 0;
 		/*dcurrentf it wasn't NUL, we know it was '/'. Skip that
@@ -1959,13 +1964,13 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 			return 0;
 
 		name += len;
+		
 		if(nd->inode){
 			if(nd->inode->i_op->chain_lookup){
-				printk(KERN_ALERT "NFS Inode");
+				printk(KERN_ALERT "NFS Inode\n");
 				return walk_chain(name, nd);
 			}
 		}
-		
 		err = walk_component(nd, &next, LOOKUP_FOLLOW);
 		if (err < 0)
 			return err;
