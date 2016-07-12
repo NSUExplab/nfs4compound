@@ -3372,9 +3372,9 @@ static int nfs4_proc_lookup(struct inode *dir, struct qstr *name,
 }
 
 static int nfs4_proc_chain_lookup(struct inode *dir, struct list_head *dchain_list,
-			    struct nfs_fh ** fhandles, struct nfs_fattr *fattr,
-			    struct nfs4_label *label, int size){	
-	int status;
+			    struct nfs_fh ** fhandles, struct nfs_fattr **fattrs,
+			    struct nfs4_label **labels, int size){	
+	int status, i;
 	struct rpc_clnt *client = NFS_CLIENT(dir);
 	struct nfs_server *server = NFS_SERVER(dir);
 	struct rpc_procinfo * rpc_proc = &nfs4_procedures[NFSPROC4_CLNT_CHAIN_LOOKUP];
@@ -3386,9 +3386,9 @@ static int nfs4_proc_chain_lookup(struct inode *dir, struct list_head *dchain_li
 	};
 	struct nfs4_chain_lookup_res res = {
 		.server = server,
-		.fattr = fattr,
+		.fattrs = fattrs,
 		.size = size,
-		.label = label,
+		.labels = labels,
 		.fhandles = fhandles	
 	};
 
@@ -3398,13 +3398,14 @@ static int nfs4_proc_chain_lookup(struct inode *dir, struct list_head *dchain_li
 		.rpc_resp = &res,
 	};
 
-	args.bitmask = nfs4_bitmask(server, label);
+	args.bitmask = nfs4_bitmask(server, labels[size - 1]);
 
-	nfs_fattr_init(fattr);
+	for(i = 0; i < size; ++i)
+		nfs_fattr_init(fattrs[i]);
 
 //	dprintk("NFS call chain_lookup %s\n", );
 	status = nfs4_call_sync(client, server, &msg, &args.seq_args, &res.seq_res, 0);
-	dprintk(KERN_ALERT "NFS reply chain_lookup: %d\n", status);
+//	printk(KERN_ALERT "NFS reply chain_lookup: %d\n", status);
 	return status;
 
 }

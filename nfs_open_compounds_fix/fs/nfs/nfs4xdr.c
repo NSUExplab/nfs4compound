@@ -2138,8 +2138,8 @@ static void nfs4_xdr_enc_chain_lookup(struct rpc_rqst *req, struct xdr_stream *x
 		cur_dentry = list_entry(cur_pos, struct chain_dentry, list);
 		encode_lookup(xdr, &cur_dentry->dentry->d_name, &hdr);
 		encode_getfh(xdr, &hdr);
+		encode_getfattr(xdr, args->bitmask, &hdr);
 	}
-	encode_getfattr(xdr, args->bitmask, &hdr);
 	encode_nops(&hdr);
 }
 /*
@@ -6098,8 +6098,11 @@ static int nfs4_xdr_dec_chain_lookup(struct rpc_rqst *rqstp, struct xdr_stream *
 		status = decode_getfh(xdr, res->fhandles[i]);
 		if (status)
 			goto out;
+		status = decode_getfattr_label(xdr, res->fattrs[i], res->labels[i], res->server);
+		if (status)
+			goto out;
 	}
-	status = decode_getfattr_label(xdr, res->fattr, res->label, res->server);
+	
 out:
 	return status;
 }

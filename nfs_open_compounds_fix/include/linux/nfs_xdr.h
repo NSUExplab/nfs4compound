@@ -943,10 +943,10 @@ struct nfs4_chain_lookup_arg {
 struct nfs4_chain_lookup_res {
 	struct nfs4_sequence_res	seq_res;
 	const struct nfs_server *	server;
-	struct nfs_fattr *		fattr;
+	struct nfs_fattr **		fattrs;
 	int size;
 	struct nfs_fh **		fhandles;
-	struct nfs4_label		*label;
+	struct nfs4_label **	labels;
 };
 
 struct nfs4_lookup_root_arg {
@@ -1458,8 +1458,8 @@ struct nfs_rpc_ops {
 			    struct nfs_fh *, struct nfs_fattr *,
 			    struct nfs4_label *);
 	int	(*chain_lookup)  (struct inode *, struct list_head *,
-			    struct nfs_fh **, struct nfs_fattr *,
-			    struct nfs4_label *, int size);
+			    struct nfs_fh **, struct nfs_fattr **,
+			    struct nfs4_label **, int size);
 	int	(*access)  (struct inode *, struct nfs_access_entry *);
 	int	(*readlink)(struct inode *, struct page *, unsigned int,
 			    unsigned int);
