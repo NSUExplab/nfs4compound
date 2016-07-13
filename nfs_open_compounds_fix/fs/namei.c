@@ -1977,12 +1977,13 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		
 		name += len;
 		
-		if(nd->inode){
-			if(nd->inode->i_op->chain_lookup){
-//				printk(KERN_ALERT "NFS Inode\n");
+		if(likely(nd->inode)){
+			if(nd->inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
+				printk(KERN_ALERT "chain FS inode\n");
 				return walk_chain(name, nd);
 			}
 		}
+
 		err = walk_component(nd, &next, LOOKUP_FOLLOW);
 		if (err < 0)
 			return err;
