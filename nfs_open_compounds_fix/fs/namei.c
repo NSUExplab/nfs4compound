@@ -1801,7 +1801,7 @@ static inline unsigned long hash_name(const char *name, unsigned int *hashp)
 static inline int walk_chain(const char *name, struct nameidata *nd)
 {
 	LIST_HEAD(dchain_list);
-	struct list_head *pos;
+	struct list_head *pos, *q;
 
 	struct dentry *dcurrent = nd->path.dentry;
 	struct dentry *dlast = dcurrent;
@@ -1815,7 +1815,7 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 	long len;
 	int type;
 	struct path path;
-	printk(KERN_ALERT "NFS lookup flags: %d\n", nd->flags);
+//	printk(KERN_ALERT "NFS lookup flags: %d\n", nd->flags);
 
 	if(nd->flags & LOOKUP_FOLLOW) printk(KERN_ALERT "NFS lookup follow\n");
 
@@ -1842,7 +1842,7 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 				path.mnt = nd->path.mnt;
 				path_to_nameidata(&path, nd);
 				nd->inode = dcurrent->d_inode;
-				printk(KERN_ALERT "NFS cache name: %s, inode: %lu\n", dcurrent->d_name.name, dcurrent->d_inode->i_ino);
+//				printk(KERN_ALERT "NFS cache name: %s, inode: %lu\n", dcurrent->d_name.name, dcurrent->d_inode->i_ino);
 			}
 			else{
 				dcurrent = nd->path.dentry;
@@ -1852,7 +1852,7 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 		} else {
 			new_chain = kmalloc(sizeof(struct chain_dentry), GFP_KERNEL);
 			if(!new_chain){ 
-				printk(KERN_ALERT "NFS new chain not allocated!\n");
+//				printk(KERN_ALERT "NFS new chain not allocated!\n");
 				return -1;
 			}
 
@@ -1908,22 +1908,22 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 	}
 
 	if(!dentry_count){ 
-		printk(KERN_ALERT "NFS dput last\n");
+//		dput(nd->path.dentry);
+//		printk(KERN_ALERT "NFS dput last\n");
 		return 0;
 	}
 	dcurrent = first_inode->i_op->chain_lookup(nd, &dchain_list, dentry_count);
 	err = IS_ERR(dcurrent);
 
-	list_for_each(pos, &dchain_list){
+	list_for_each_safe(pos, q, &dchain_list){
 		new_chain = list_entry(pos, struct chain_dentry, list);
-		printk(KERN_ALERT "NFS new name: %s, inode: %lu\n", new_chain->dentry->d_name.name, new_chain->dentry->d_inode->i_ino);
-//		dput(new_chain->dentry);
-//		list_del(pos);
+//		printk(KERN_ALERT "NFS new name: %s, inode: %lu\n", new_chain->dentry->d_name.name, new_chain->dentry->d_inode->i_ino);
+		list_del(pos);
 		if(new_chain)
 			kfree(new_chain);
 	}
 
-	printk(KERN_ALERT "NFS lookup err: %d\n", err);
+//	printk(KERN_ALERT "NFS lookup err: %d\n", err);
 	return err;
 }
 
@@ -1996,11 +1996,9 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		
 		name += len;
 		
-		if(likely(nd->inode)){
-			if(nd->inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
-				printk(KERN_ALERT "chain FS inode\n");
+		if(likely(nd->inode) && nd->inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
+//				printk(KERN_ALERT "chain FS inode\n");
 				return walk_chain(name, nd);
-			}
 		}
 
 		err = walk_component(nd, &next, LOOKUP_FOLLOW);
@@ -2188,9 +2186,9 @@ static int path_lookupat(int dfd, const char *name,
 static int filename_lookup(int dfd, struct filename *name,
 				unsigned int flags, struct nameidata *nd)
 {
-	int retval = path_lookupat(dfd, name->name, flags | LOOKUP_RCU, nd);
-	if (unlikely(retval == -ECHILD))
-		retval = path_lookupat(dfd, name->name, flags, nd);
+	//int retval = path_lookupat(dfd, name->name, flags | LOOKUP_RCU, nd);
+	//if (unlikely(retval == -ECHILD))
+		int retval = path_lookupat(dfd, name->name, flags, nd);
 	if (unlikely(retval == -ESTALE))
 		retval = path_lookupat(dfd, name->name,
 						flags | LOOKUP_REVAL, nd);
@@ -2543,8 +2541,8 @@ filename_mountpoint(int dfd, struct filename *s, struct path *path,
 	int error;
 	if (IS_ERR(s))
 		return PTR_ERR(s);
-	error = path_mountpoint(dfd, s->name, path, flags | LOOKUP_RCU);
-	if (unlikely(error == -ECHILD))
+	//error = path_mountpoint(dfd, s->name, path, flags | LOOKUP_RCU);
+	//if (unlikely(error == -ECHILD))
 		error = path_mountpoint(dfd, s->name, path, flags);
 	if (unlikely(error == -ESTALE))
 		error = path_mountpoint(dfd, s->name, path, flags | LOOKUP_REVAL);
@@ -3402,8 +3400,8 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
 	struct nameidata nd;
 	struct file *filp;
 
-	filp = path_openat(dfd, pathname, &nd, op, flags | LOOKUP_RCU);
-	if (unlikely(filp == ERR_PTR(-ECHILD)))
+	//filp = path_openat(dfd, pathname, &nd, op, flags | LOOKUP_RCU);
+	//if (unlikely(filp == ERR_PTR(-ECHILD)))
 		filp = path_openat(dfd, pathname, &nd, op, flags);
 	if (unlikely(filp == ERR_PTR(-ESTALE)))
 		filp = path_openat(dfd, pathname, &nd, op, flags | LOOKUP_REVAL);
@@ -3429,8 +3427,8 @@ struct file *do_file_open_root(struct dentry *dentry, struct vfsmount *mnt,
 	if (unlikely(IS_ERR(filename)))
 		return ERR_CAST(filename);
 
-	file = path_openat(-1, filename, &nd, op, flags | LOOKUP_RCU);
-	if (unlikely(file == ERR_PTR(-ECHILD)))
+	//file = path_openat(-1, filename, &nd, op, flags | LOOKUP_RCU);
+	//if (unlikely(file == ERR_PTR(-ECHILD)))
 		file = path_openat(-1, filename, &nd, op, flags);
 	if (unlikely(file == ERR_PTR(-ESTALE)))
 		file = path_openat(-1, filename, &nd, op, flags | LOOKUP_REVAL);

@@ -1520,7 +1520,7 @@ out:
 	kfree(fhandles);
 	kfree(fattrs);
 	kfree(labels);
-	printk(KERN_ALERT "NFS handles free\n");
+//	printk(KERN_ALERT "NFS handles free\n");
 	return res;
 }
 EXPORT_SYMBOL_GPL(nfs_chain_lookup);

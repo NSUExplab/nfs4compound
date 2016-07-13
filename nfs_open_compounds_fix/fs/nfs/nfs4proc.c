@@ -3405,7 +3405,7 @@ static int nfs4_proc_chain_lookup(struct inode *dir, struct list_head *dchain_li
 
 //	dprintk("NFS call chain_lookup %s\n", );
 	status = nfs4_call_sync(client, server, &msg, &args.seq_args, &res.seq_res, 0);
-	printk(KERN_ALERT "NFS reply chain_lookup: %d\n", status);
+//	printk(KERN_ALERT "NFS reply chain_lookup: %d\n", status);
 	return status;
 
 }
