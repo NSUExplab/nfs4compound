@@ -1804,7 +1804,7 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 	struct list_head *pos;
 
 	struct dentry *dcurrent = nd->path.dentry;
-	struct dentry *dlast;
+	struct dentry *dlast = dcurrent;
 	struct inode *first_inode = nd->inode;
 	struct chain_dentry * new_chain;
 	
@@ -1814,7 +1814,14 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 	int dentry_count = 0;
 	long len;
 	int type;
-//	printk(KERN_ALERT "NFS mount: %s\n", nd->path.mnt->mnt_root->d_name.name);
+	struct path path;
+	printk(KERN_ALERT "NFS lookup flags: %d\n", nd->flags);
+
+	if(nd->flags & LOOKUP_FOLLOW) printk(KERN_ALERT "NFS lookup follow\n");
+
+//	err = follow_managed(&path, nd->flags);
+//	path_to_nameidata(&path, nd);
+//	printk(KERN_ALERT "NFS root mount after: %s, fs: %s\n", nd->root.dentry->d_name.name, nd->root.mnt->mnt_sb->s_type->name);
 	for(;;){
 		
 		
@@ -1826,12 +1833,16 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 		 */
 //		printk(KERN_ALERT "NFS name: %s\n", this.name);
 		if(is_found_work){
+			mutex_lock(&dlast->d_inode->i_mutex);
 			dcurrent = d_lookup(dcurrent, &this);
+			mutex_unlock(&dlast->d_inode->i_mutex);
 			dlast = dcurrent;
 			if(dcurrent){
-				nd->path.dentry = dcurrent;
+				path.dentry = dcurrent;
+				path.mnt = nd->path.mnt;
+				path_to_nameidata(&path, nd);
 				nd->inode = dcurrent->d_inode;
-//				printk(KERN_ALERT "NFS cache name: %s, inode: %lu\n", dcurrent->d_name.name, dcurrent->d_inode->i_ino);
+				printk(KERN_ALERT "NFS cache name: %s, inode: %lu\n", dcurrent->d_name.name, dcurrent->d_inode->i_ino);
 			}
 			else{
 				dcurrent = nd->path.dentry;
@@ -1840,7 +1851,13 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 			}
 		} else {
 			new_chain = kmalloc(sizeof(struct chain_dentry), GFP_KERNEL);
+			if(!new_chain){ 
+				printk(KERN_ALERT "NFS new chain not allocated!\n");
+				return -1;
+			}
+
 			dcurrent = new_chain->dentry = d_alloc(dcurrent, &this);
+
 			dlast = dcurrent;
 			list_add_tail(&new_chain->list, &dchain_list);
 			dentry_count++;			
@@ -1886,25 +1903,27 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 		
 		name += len;
 
-		//
 		//err = lookup_fast(nd, )
 
 	}
-	if(!dentry_count) return 0;
+
+	if(!dentry_count){ 
+		printk(KERN_ALERT "NFS dput last\n");
+		return 0;
+	}
 	dcurrent = first_inode->i_op->chain_lookup(nd, &dchain_list, dentry_count);
 	err = IS_ERR(dcurrent);
 
 	list_for_each(pos, &dchain_list){
 		new_chain = list_entry(pos, struct chain_dentry, list);
-		if(err) dput(new_chain->dentry);
-//		printk(KERN_ALERT "NFS chain inst: %s\n", new_chain->dentry->d_name.name);
+		printk(KERN_ALERT "NFS new name: %s, inode: %lu\n", new_chain->dentry->d_name.name, new_chain->dentry->d_inode->i_ino);
+//		dput(new_chain->dentry);
 //		list_del(pos);
-//		kfree(new_chain);
+		if(new_chain)
+			kfree(new_chain);
 	}
-	nd->path.dentry = dlast;
-	nd->inode = dlast->d_inode;
-//	printk(KERN_ALERT "NFS last name: %s\n", nd->path.dentry->d_name.name);
-//	err = -ENOENT;
+
+	printk(KERN_ALERT "NFS lookup err: %d\n", err);
 	return err;
 }
 

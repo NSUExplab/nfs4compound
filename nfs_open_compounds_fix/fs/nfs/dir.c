@@ -1438,9 +1438,12 @@ struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_
 	struct dentry *res = parent;
 	struct dentry *dentry;
 	struct list_head* cur_pos;
-	struct inode* dir = parent->d_inode;
+	struct inode* dir;
 	struct chain_dentry* dchain_entry;
 	
+	mutex_lock(&parent->d_inode->i_mutex);
+//	printk(KERN_ALERT "NFS parent : %s\n", parent->d_name.name);
+	dir = parent->d_inode;
 //	printk(KERN_ALERT "NFS handles \n");
 	
 	if(!fattrs || !fhandles || !labels)
@@ -1457,7 +1460,6 @@ struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_
 		allocated++;
 //		printk(KERN_ALERT "NFS end allocating handles : %d\n", allocated);
 	}
-//	printk(KERN_ALERT "NFS parent : %s\n", parent->d_name.name);
 
 	nfs_block_sillyrename(parent);
 //	error = -ENOENT;
@@ -1473,8 +1475,19 @@ struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_
 	}
 	i = 0;
 	list_for_each(cur_pos, dchain_list){
+		inode = NULL;
 		dchain_entry = list_entry(cur_pos, struct chain_dentry, list);
 		dentry = dchain_entry->dentry;
+		
+		if(error == -ENOENT && fhandles[i] == NULL){
+			res = d_materialise_unique(dentry, inode);
+			if (res != NULL) {
+				if (IS_ERR(res))
+					goto out_unblock_sillyrename;
+				dchain_entry->dentry = res;
+			}	
+			return res;
+		}
 		inode = nfs_fhget(parent->d_sb, fhandles[i], fattrs[i], labels[i]);
 //		printk(KERN_ALERT "NFS 1 dentry : %s - inode: %lu\n", dentry->d_name.name, inode->i_ino);
 
@@ -1483,7 +1496,10 @@ struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_
 		if (IS_ERR(res))
 			goto out_unblock_sillyrename;
 		res = d_materialise_unique(dentry, inode);
-//		printk(KERN_ALERT "NFS dentry: %s - inode: %lu\n", dentry->d_name.name, dentry->d_inode->i_ino);
+		
+		dput(nd->path.dentry);
+		nd->path.dentry = dentry;
+		nd->inode = nd->path.dentry->d_inode;
 		if (res != NULL) {
 			if (IS_ERR(res))
 				goto out_unblock_sillyrename;
@@ -1499,11 +1515,12 @@ out:
 		nfs_free_fattr(fattrs[i]);
 		nfs4_label_free(labels[i]);
 	}
-	
-//	kfree(fhandles);
-//	kfree(fattrs);
-//	kfree(labels);
-//	printk(KERN_ALERT "NFS handles free\n");
+	mutex_unlock(&parent->d_inode->i_mutex);
+
+	kfree(fhandles);
+	kfree(fattrs);
+	kfree(labels);
+	printk(KERN_ALERT "NFS handles free\n");
 	return res;
 }
 EXPORT_SYMBOL_GPL(nfs_chain_lookup);
