@@ -1804,11 +1804,12 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 	struct list_head *pos, *q;
 
 	struct dentry *dcurrent = nd->path.dentry;
-	struct dentry *dlast = dcurrent;
+	struct dentry *parent = dcurrent;
 	struct inode *first_inode = nd->inode;
 	struct chain_dentry * new_chain;
 	
-	int is_found_work = 1;
+	//bool is_found_work = true;
+	bool need_lookup;
 	int err = 0;
 	struct qstr this = nd->last;
 	int dentry_count = 0;
@@ -1817,7 +1818,8 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 	struct path path;
 //	printk(KERN_ALERT "NFS lookup flags: %d\n", nd->flags);
 
-	if(nd->flags & LOOKUP_FOLLOW) printk(KERN_ALERT "NFS lookup follow\n");
+	if(nd->flags & LOOKUP_FOLLOW) 
+		printk(KERN_ALERT "NFS lookup follow\n");
 
 //	err = follow_managed(&path, nd->flags);
 //	path_to_nameidata(&path, nd);
@@ -1832,33 +1834,29 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 		/	break;
 		 */
 //		printk(KERN_ALERT "NFS name: %s\n", this.name);
-		if(is_found_work){
-			mutex_lock(&dlast->d_inode->i_mutex);
-			dcurrent = d_lookup(dcurrent, &this);
-			mutex_unlock(&dlast->d_inode->i_mutex);
-			dlast = dcurrent;
-			if(dcurrent){
-				path.dentry = dcurrent;
-				path.mnt = nd->path.mnt;
-				path_to_nameidata(&path, nd);
-				nd->inode = dcurrent->d_inode;
-//				printk(KERN_ALERT "NFS cache name: %s, inode: %lu\n", dcurrent->d_name.name, dcurrent->d_inode->i_ino);
-			}
-			else{
-				dcurrent = nd->path.dentry;
-				is_found_work = 0;
-				continue;
-			}
+
+		mutex_lock(&parent->d_inode->i_mutex);
+		dcurrent = lookup_dcache(&this, dcurrent, nd->flags, &need_lookup);
+		mutex_unlock(&parent->d_inode->i_mutex);
+
+		if(!need_lookup){
+			parent = dcurrent;
+			path.dentry = dcurrent;
+			path.mnt = nd->path.mnt;
+			path_to_nameidata(&path, nd);
+			nd->inode = dcurrent->d_inode;
+//			printk(KERN_ALERT "NFS cache name: %s, inode: %lu\n", dcurrent->d_name.name, dcurrent->d_inode->i_ino);
+//			dcurrent = nd->path.dentry;
 		} else {
 			new_chain = kmalloc(sizeof(struct chain_dentry), GFP_KERNEL);
 			if(!new_chain){ 
 //				printk(KERN_ALERT "NFS new chain not allocated!\n");
-				return -1;
+				return -ENOMEM;
 			}
 
-			dcurrent = new_chain->dentry = d_alloc(dcurrent, &this);
+			new_chain->dentry = dcurrent;
 
-			dlast = dcurrent;
+//			dlast = dcurrent;
 			list_add_tail(&new_chain->list, &dchain_list);
 			dentry_count++;			
 		}
@@ -1913,17 +1911,18 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 		return 0;
 	}
 	dcurrent = first_inode->i_op->chain_lookup(nd, &dchain_list, dentry_count);
-	err = IS_ERR(dcurrent);
+
 
 	list_for_each_safe(pos, q, &dchain_list){
 		new_chain = list_entry(pos, struct chain_dentry, list);
 //		printk(KERN_ALERT "NFS new name: %s, inode: %lu\n", new_chain->dentry->d_name.name, new_chain->dentry->d_inode->i_ino);
 		list_del(pos);
-		if(new_chain)
-			kfree(new_chain);
+		kfree(new_chain);
 	}
 
 //	printk(KERN_ALERT "NFS lookup err: %d\n", err);
+	if (IS_ERR(dcurrent)) 
+		err = PTR_ERR(dcurrent);
 	return err;
 }
 
