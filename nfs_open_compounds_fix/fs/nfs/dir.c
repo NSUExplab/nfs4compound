@@ -1437,6 +1437,7 @@ struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_
 	struct dentry *parent = nd->path.dentry;
 	struct dentry *res = parent;
 	struct dentry *dentry;
+	struct dentry *dprev = nd->path.dentry;
 	struct list_head* cur_pos;
 	struct inode* dir;
 	struct chain_dentry* dchain_entry;
@@ -1465,11 +1466,11 @@ struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_
 //	error = -ENOENT;
 //	printk(KERN_ALERT "NFS handles allocated\n");
 	error = NFS_PROTO(dir)->chain_lookup(dir, dchain_list, fhandles, fattrs, labels, size);
-	if (error == -ENOENT){
-		res = ERR_PTR(error);
-		goto out_unblock_sillyrename;
-	}
-	if (error < 0) {
+//	if (error == -ENOENT){
+//		res = ERR_PTR(error);
+//		goto out_noentry;
+//	}
+	if (error < 0 && error != -ENOENT) {
 		res = ERR_PTR(error);
 		goto out_unblock_sillyrename;
 	}
@@ -1478,7 +1479,7 @@ struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_
 		inode = NULL;
 		dchain_entry = list_entry(cur_pos, struct chain_dentry, list);
 		dentry = dchain_entry->dentry;
-		
+/*		
 		if(error == -ENOENT && fhandles[i] == NULL){
 			res = d_materialise_unique(dentry, inode);
 			if (res != NULL) {
@@ -1488,8 +1489,8 @@ struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_
 			}	
 			return res;
 		}
+*/
 		inode = nfs_fhget(parent->d_sb, fhandles[i], fattrs[i], labels[i]);
-//		printk(KERN_ALERT "NFS 1 dentry : %s - inode: %lu\n", dentry->d_name.name, inode->i_ino);
 
 		i++;
 		res = ERR_CAST(inode);
@@ -1497,15 +1498,14 @@ struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_
 			goto out_unblock_sillyrename;
 		res = d_materialise_unique(dentry, inode);
 		
-		dput(nd->path.dentry);
-		nd->path.dentry = dentry;
-		nd->inode = nd->path.dentry->d_inode;
+		dprev = dentry;
 		if (res != NULL) {
 			if (IS_ERR(res))
 				goto out_unblock_sillyrename;
 			dchain_entry->dentry = res;
 		}
 	}
+
 out_unblock_sillyrename:
 	nfs_unblock_sillyrename(parent);
 out:

@@ -1808,7 +1808,6 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 	struct inode *first_inode = nd->inode;
 	struct chain_dentry * new_chain;
 	
-	//bool is_found_work = true;
 	bool need_lookup;
 	int err = 0;
 	struct qstr this = nd->last;
@@ -1818,8 +1817,8 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 	struct path path;
 //	printk(KERN_ALERT "NFS lookup flags: %d\n", nd->flags);
 
-	if(nd->flags & LOOKUP_FOLLOW) 
-		printk(KERN_ALERT "NFS lookup follow\n");
+	//if(nd->flags & LOOKUP_FOLLOW) 
+	//	printk(KERN_ALERT "NFS lookup follow\n");
 
 //	err = follow_managed(&path, nd->flags);
 //	path_to_nameidata(&path, nd);
@@ -1845,6 +1844,10 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 			path.mnt = nd->path.mnt;
 			path_to_nameidata(&path, nd);
 			nd->inode = dcurrent->d_inode;
+			if(unlikely(!nd->inode)){
+				err = -ENOENT;
+				goto out;
+			}
 //			printk(KERN_ALERT "NFS cache name: %s, inode: %lu\n", dcurrent->d_name.name, dcurrent->d_inode->i_ino);
 //			dcurrent = nd->path.dentry;
 		} else {
@@ -1905,24 +1908,26 @@ static inline int walk_chain(const char *name, struct nameidata *nd)
 
 	}
 
-	if(!dentry_count){ 
-//		dput(nd->path.dentry);
-//		printk(KERN_ALERT "NFS dput last\n");
+	if(!dentry_count) 
 		return 0;
-	}
+
 	dcurrent = first_inode->i_op->chain_lookup(nd, &dchain_list, dentry_count);
 
+	if (IS_ERR(dcurrent)) 
+		err = PTR_ERR(dcurrent);
 
 	list_for_each_safe(pos, q, &dchain_list){
 		new_chain = list_entry(pos, struct chain_dentry, list);
-//		printk(KERN_ALERT "NFS new name: %s, inode: %lu\n", new_chain->dentry->d_name.name, new_chain->dentry->d_inode->i_ino);
+		dput(nd->path.dentry);
+		nd->path.dentry = new_chain->dentry;
 		list_del(pos);
 		kfree(new_chain);
 	}
 
-//	printk(KERN_ALERT "NFS lookup err: %d\n", err);
-	if (IS_ERR(dcurrent)) 
-		err = PTR_ERR(dcurrent);
+	nd->inode = nd->path.dentry->d_inode;
+out:
+	if(unlikely(!nd->inode))
+		terminate_walk(nd);
 	return err;
 }
 
@@ -1996,7 +2001,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		name += len;
 		
 		if(likely(nd->inode) && nd->inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
-//				printk(KERN_ALERT "chain FS inode\n");
+				//printk(KERN_ALERT "chain FS inode\n");
 				return walk_chain(name, nd);
 		}
 
