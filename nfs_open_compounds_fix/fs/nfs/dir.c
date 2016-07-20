@@ -1437,7 +1437,6 @@ struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_
 	struct dentry *parent = nd->path.dentry;
 	struct dentry *res = parent;
 	struct dentry *dentry;
-	struct dentry *dprev = nd->path.dentry;
 	struct list_head* cur_pos;
 	struct inode* dir;
 	struct chain_dentry* dchain_entry;
@@ -1491,14 +1490,14 @@ struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_
 		}
 */
 		inode = nfs_fhget(parent->d_sb, fhandles[i], fattrs[i], labels[i]);
-
 		i++;
+
 		res = ERR_CAST(inode);
-		if (IS_ERR(res))
-			goto out_unblock_sillyrename;
-		res = d_materialise_unique(dentry, inode);
-		
-		dprev = dentry;
+		if (IS_ERR(res)) {
+			res = d_materialise_unique(dentry, NULL);
+		} else {
+			res = d_materialise_unique(dentry, inode);
+		}
 		if (res != NULL) {
 			if (IS_ERR(res))
 				goto out_unblock_sillyrename;

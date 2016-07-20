@@ -3187,7 +3187,7 @@ static int _nfs4_proc_getattr(struct nfs_server *server, struct nfs_fh *fhandle,
 		.rpc_argp = &args,
 		.rpc_resp = &res,
 	};
-
+	dump_stack();
 	args.bitmask = nfs4_bitmask(server, label);
 
 	nfs_fattr_init(fattr);
@@ -3450,7 +3450,7 @@ static int _nfs4_proc_access(struct inode *inode, struct nfs_access_entry *entry
 	};
 	int mode = entry->mask;
 	int status = 0;
-
+	dump_stack();
 	/*
 	 * Determine which access bits we want to ask for...
 	 */
