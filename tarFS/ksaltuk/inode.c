@@ -34,7 +34,7 @@ void set_type(umode_t *mode, char flag){
 			*mode |= S_IFIFO;
 			break;
 		case '2':
-		case  7 :
+		case '7' :
 		default:
 			pr_err("tarfs: incorrect type flag \"%c\"\n", flag);
 	}
