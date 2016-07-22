@@ -1514,6 +1514,7 @@ int nfs_chain_lookup_open(struct nameidata *nd, struct dentry *dentry,
 			   struct file * file, unsigned open_flag,
 			   umode_t create_mode, int *opened) {
 	int error = 0;
+	
 	error = NFS_PROTO(nd->inode)->chain_lookup_open(NULL, NULL, NULL, NULL, NULL, 0);
 	return error;
 }	

@@ -2869,11 +2869,11 @@ static int atomic_open(struct nameidata *nd, struct dentry *dentry,
 
 	file->f_path.dentry = DENTRY_NOT_SET;
 	file->f_path.mnt = nd->path.mnt;
-	if(dir->i_op->chain_lookup_open)
-		error = dir->i_op->chain_lookup_open(nd, dentry, file, open_flag,
-					  mode, opened);
-	else
-		error = dir->i_op->atomic_open(dir, dentry, file, open_flag, mode,
+//	if(dir->i_op->chain_lookup_open)
+//		error = dir->i_op->chain_lookup_open(nd, dentry, file, open_flag,
+//					  mode, opened);
+//	else
+	error = dir->i_op->atomic_open(dir, dentry, file, open_flag, mode,
 				      opened);
 	if (error < 0) {
 		if (create_error && error == -ENOENT)
@@ -3091,6 +3091,7 @@ static int do_last(struct nameidata *nd, struct path *path,
 		if (open_flag & O_PATH && !(nd->flags & LOOKUP_FOLLOW))
 			symlink_ok = true;
 		/* we _can_ be in RCU mode here */
+		
 		error = lookup_fast(nd, path, &inode);
 		if (likely(!error))
 			goto finish_lookup;
@@ -3316,7 +3317,10 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 	error = link_path_walk(pathname->name, nd);
 	if (unlikely(error))
 		goto out;
-
+	if(nd->path.dentry->d_inode && nd->path.dentry->d_inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
+		if(nd->chain_size)
+			error = nd->path.dentry->d_inode->i_op->chain_lookup(nd);
+	}
 	error = do_last(nd, &path, file, op, &opened, pathname);
 	while (unlikely(error > 0)) { /* trailing symlink */
 		struct path link = path;
