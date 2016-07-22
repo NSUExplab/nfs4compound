@@ -329,8 +329,10 @@ extern int nfs_access_cache_shrinker(struct shrinker *shrink,
 					struct shrink_control *sc);
 extern void nfs_force_use_readdirplus(struct inode *dir);
 struct dentry *nfs_lookup(struct inode *, struct dentry *, unsigned int);
-struct dentry *nfs_chain_lookup(struct nameidata *, struct list_head *, int size);
-
+int nfs_chain_lookup(struct nameidata *);
+int nfs_chain_lookup_open(struct nameidata *, struct dentry *,
+			   struct file *, unsigned,
+			   umode_t, int *);
 int nfs_create(struct inode *, struct dentry *, umode_t, bool);
 int nfs_mkdir(struct inode *, struct dentry *, umode_t);
 int nfs_rmdir(struct inode *, struct dentry *);

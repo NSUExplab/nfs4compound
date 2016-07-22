@@ -1427,100 +1427,141 @@ out:
 }
 EXPORT_SYMBOL_GPL(nfs_lookup);
 
-struct dentry * nfs_chain_lookup(struct nameidata *nd, struct list_head *dchain_list, int size)
-{
-	int error = 0, i = 0, allocated = 0;
-	struct nfs_fh **fhandles = kmalloc(sizeof(struct nfs_fh*) * size, GFP_KERNEL);
-	struct inode *inode;
-	struct nfs_fattr **fattrs = kmalloc(sizeof(struct nfs_fattr*) * size, GFP_KERNEL);
-	struct nfs4_label **labels = kmalloc(sizeof(struct nfs4_label*) * size, GFP_KERNEL);
-	struct dentry *parent = nd->path.dentry;
-	struct dentry *res = parent;
-	struct dentry *dentry;
-	struct list_head* cur_pos;
-	struct inode* dir;
-	struct chain_dentry* dchain_entry;
-	
-	mutex_lock(&parent->d_inode->i_mutex);
-//	printk(KERN_ALERT "NFS parent : %s\n", parent->d_name.name);
-	dir = parent->d_inode;
-//	printk(KERN_ALERT "NFS handles \n");
-	
-	if(!fattrs || !fhandles || !labels)
-		goto out;
-//	printk(KERN_ALERT "NFS checked handles \n");
+int nfs_allocate_handles(struct nfs_fh ***fhandles, struct nfs_fattr ***fattrs, struct nfs4_label ***labels, struct inode *dir, int size){
+	int i = 0;
+	*fhandles = kmalloc(sizeof(struct nfs_fh*) * size, GFP_KERNEL);
+	*fattrs = kmalloc(sizeof(struct nfs_fattr*) * size, GFP_KERNEL);
+	*labels = kmalloc(sizeof(struct nfs4_label*) * size, GFP_KERNEL);
+
+	printk(KERN_ALERT "NFS size is: %d and pointers: %p, %p, %p\n", size, *fhandles, *fattrs, *labels);
+
+	if(!*fattrs || !*fhandles || !*labels)
+		return -ENOMEM;
 
 	for(i = 0; i < size; i++){
-//		printk(KERN_ALERT "NFS start allocating handles : %d\n", allocated);
-		fhandles[i] = nfs_alloc_fhandle();
-		fattrs[i] = nfs_alloc_fattr();
-		labels[i] = nfs4_label_alloc(NFS_SERVER(dir), GFP_NOWAIT);
-		if (!fhandles[i] || !fattrs[i])
-			goto out;
-		allocated++;
-//		printk(KERN_ALERT "NFS end allocating handles : %d\n", allocated);
+		printk(KERN_ALERT "NFS allocating: %d\n", i);
+		(*fhandles)[i] = nfs_alloc_fhandle();
+		printk(KERN_ALERT "NFS allocating fhandle: %d, %p\n", i, (*fhandles)[i]);
+		(*fattrs)[i] = nfs_alloc_fattr();
+		printk(KERN_ALERT "NFS allocating fattr: %d, %p\n", i, (*fattrs)[i]);
+		(*labels)[i] = nfs4_label_alloc(NFS_SERVER(dir), GFP_NOWAIT);
+		printk(KERN_ALERT "NFS allocating label: %d\n", i);
+		if (!(*fhandles)[i] || !(*fattrs)[i])
+			return -ENOMEM;
 	}
+	return 0;
+}
 
-	nfs_block_sillyrename(parent);
-//	error = -ENOENT;
-//	printk(KERN_ALERT "NFS handles allocated\n");
-	error = NFS_PROTO(dir)->chain_lookup(dir, dchain_list, fhandles, fattrs, labels, size);
-//	if (error == -ENOENT){
-//		res = ERR_PTR(error);
-//		goto out_noentry;
-//	}
-	if (error < 0 && error != -ENOENT) {
-		res = ERR_PTR(error);
-		goto out_unblock_sillyrename;
-	}
-	i = 0;
+struct dentry * nfs_fill_dchain_list(struct nameidata *nd, struct nfs_fh **fhandles, 
+				struct nfs_fattr **fattrs, struct nfs4_label **labels, struct dentry *parent){
+	int i = 0;
+	struct list_head *cur_pos;
+	struct inode *inode = NULL;
+	struct dentry *dentry = NULL;
+	struct chain_dentry *dchain_entry;
+	struct dentry *res = NULL;
+	struct list_head *dchain_list = &nd->dchain_list;
+
 	list_for_each(cur_pos, dchain_list){
+
 		inode = NULL;
 		dchain_entry = list_entry(cur_pos, struct chain_dentry, list);
 		dentry = dchain_entry->dentry;
-/*		
-		if(error == -ENOENT && fhandles[i] == NULL){
-			res = d_materialise_unique(dentry, inode);
-			if (res != NULL) {
-				if (IS_ERR(res))
-					goto out_unblock_sillyrename;
-				dchain_entry->dentry = res;
-			}	
-			return res;
-		}
-*/
+
 		inode = nfs_fhget(parent->d_sb, fhandles[i], fattrs[i], labels[i]);
 		i++;
 
 		res = ERR_CAST(inode);
+
 		if (IS_ERR(res)) {
 			res = d_materialise_unique(dentry, NULL);
 		} else {
 			res = d_materialise_unique(dentry, inode);
 		}
+		printk(KERN_ALERT"NFS: current dentry: %s\n", dentry->d_name.name);
+		if(i < nd->chain_size){
+			printk(KERN_ALERT"PUT IT!!!\n");
+			dput(dentry);
+		}
+
 		if (res != NULL) {
 			if (IS_ERR(res))
-				goto out_unblock_sillyrename;
+				return res;
 			dchain_entry->dentry = res;
 		}
 	}
+	nd->path.dentry = dentry;
+	nd->inode = inode;
+	return res;
+}
 
-out_unblock_sillyrename:
-	nfs_unblock_sillyrename(parent);
-out:
-	
-	for(i = 0; i < allocated; i++){
+int nfs_free_handles(struct nfs_fh **fhandles, struct nfs_fattr **fattrs, struct nfs4_label **labels, int size) {
+	int i = 0;
+
+	for(i = 0; i < size; i++){
 		nfs_free_fhandle(fhandles[i]);
 		nfs_free_fattr(fattrs[i]);
 		nfs4_label_free(labels[i]);
 	}
-	mutex_unlock(&parent->d_inode->i_mutex);
 
 	kfree(fhandles);
 	kfree(fattrs);
 	kfree(labels);
+	return 0;
+}
+
+int nfs_chain_lookup_open(struct nameidata *nd, struct dentry *dentry,
+			   struct file * file, unsigned open_flag,
+			   umode_t create_mode, int *opened) {
+	int error = 0;
+	error = NFS_PROTO(nd->inode)->chain_lookup_open(NULL, NULL, NULL, NULL, NULL, 0);
+	return error;
+}	
+EXPORT_SYMBOL_GPL(nfs_chain_lookup_open);
+
+int nfs_chain_lookup(struct nameidata *nd) {
+
+	int error = 0;
+	struct nfs_fh **fhandles = NULL;
+	struct nfs_fattr **fattrs = NULL;
+	struct nfs4_label **labels = NULL;
+	struct dentry *parent = nd->path.dentry;
+	struct dentry *res;
+	struct inode* dir;
+	struct list_head *dchain_list = &nd->dchain_list;
+
+	printk(KERN_ALERT "NFS parent : %s, ino: %lu\n", parent->d_name.name, parent->d_inode->i_ino);
+
+	dir = parent->d_inode;
+	
+	error = nfs_allocate_handles(&fhandles, &fattrs, &labels, dir, nd->chain_size);
+	
+	if(error < 0)
+		goto out;
+
+	printk(KERN_ALERT "NFS allocated handles\n");
+
+	nfs_block_sillyrename(parent);
+	
+	printk(KERN_ALERT "NFS proc chain : %d\n", nd->chain_size);
+
+	error = NFS_PROTO(dir)->chain_lookup(dir, dchain_list, fhandles, fattrs, labels, nd->chain_size);
+
+	if (error < 0 && error != -ENOENT) 
+		goto out_unblock_sillyrename;
+	
+	res = nfs_fill_dchain_list(nd, fhandles, fattrs, labels, parent);
+
+
+out_unblock_sillyrename:
+	nfs_unblock_sillyrename(parent);
+out:
+//	mutex_unlock(&parent->d_inode->i_mutex);
+	dput(parent);
+	nfs_free_handles(fhandles, fattrs, labels, nd->chain_size);
+	
 //	printk(KERN_ALERT "NFS handles free\n");
-	return res;
+	return error;
 }
 EXPORT_SYMBOL_GPL(nfs_chain_lookup);
 
@@ -1676,7 +1717,10 @@ static int nfs4_lookup_revalidate(struct dentry *dentry, unsigned int flags)
 {
 	struct inode *inode;
 	int ret = 0;
-
+	if(!(flags & LOOKUP_AUTOMOUNT)){
+		printk(KERN_ALERT"olololo\n");
+		return 1; //-----------------------------------------------------------------------
+	}
 	if (!(flags & LOOKUP_OPEN) || (flags & LOOKUP_DIRECTORY))
 		goto no_open;
 	if (d_mountpoint(dentry))

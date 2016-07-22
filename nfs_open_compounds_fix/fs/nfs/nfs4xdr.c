@@ -618,6 +618,18 @@ static int nfs4_stat_to_errno(int);
 				decode_lookup_maxsz + \
 				decode_getattr_maxsz + \
 				decode_getfh_maxsz)
+#define NFS4_enc_chain_lookup_open_sz	(compound_encode_hdr_maxsz + \
+				encode_sequence_maxsz + \
+				encode_putfh_maxsz + \
+				encode_lookup_maxsz + \
+				encode_getattr_maxsz + \
+				encode_getfh_maxsz)
+#define NFS4_dec_chain_lookup_open_sz	(compound_decode_hdr_maxsz + \
+				decode_sequence_maxsz + \
+				decode_putfh_maxsz + \
+				decode_lookup_maxsz + \
+				decode_getattr_maxsz + \
+				decode_getfh_maxsz)
 #define NFS4_enc_lookup_root_sz (compound_encode_hdr_maxsz + \
 				encode_sequence_maxsz + \
 				encode_putrootfh_maxsz + \
@@ -2120,6 +2132,29 @@ static void nfs4_xdr_enc_lookup(struct rpc_rqst *req, struct xdr_stream *xdr,
  */
 static void nfs4_xdr_enc_chain_lookup(struct rpc_rqst *req, struct xdr_stream *xdr,
 				const struct nfs4_chain_lookup_arg *args)
+{
+	struct compound_hdr hdr = {
+		.minorversion = nfs4_xdr_minorversion(&args->seq_args),
+	};
+	struct list_head* cur_pos;
+	struct chain_dentry* cur_dentry;
+	
+	encode_compound_hdr(xdr, req, &hdr);
+	encode_sequence(xdr, &args->seq_args, &hdr);
+	encode_putfh(xdr, args->dir_fh, &hdr);
+	list_for_each(cur_pos, args->dchain_list){
+		cur_dentry = list_entry(cur_pos, struct chain_dentry, list);
+		encode_lookup(xdr, &cur_dentry->dentry->d_name, &hdr);
+		encode_getfh(xdr, &hdr);
+		encode_getfattr(xdr, args->bitmask, &hdr);
+	}
+	encode_nops(&hdr);
+}
+/*
+ * Encode CHAIN_LOOKUP_OPEN request
+ */
+static void nfs4_xdr_enc_chain_lookup_open(struct rpc_rqst *req, struct xdr_stream *xdr,
+				const struct nfs4_chain_lookup_open_arg *args)
 {
 	struct compound_hdr hdr = {
 		.minorversion = nfs4_xdr_minorversion(&args->seq_args),
@@ -6102,6 +6137,37 @@ static int nfs4_xdr_dec_chain_lookup(struct rpc_rqst *rqstp, struct xdr_stream *
 out:
 	return status;
 }
+
+static int nfs4_xdr_dec_chain_lookup_open(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
+			       struct nfs4_chain_lookup_open_res *res)
+{
+	struct compound_hdr hdr;
+	int status, i = 0;
+
+	status = decode_compound_hdr(xdr, &hdr);
+	if (status)
+		goto out;
+	status = decode_sequence(xdr, &res->seq_res, rqstp);
+	if (status)
+		goto out;
+	status = decode_putfh(xdr);
+	if (status)
+		goto out;
+	for(i = 0; i < res->size; i++){
+		status = decode_lookup(xdr);
+		if (status)
+			goto out;
+		status = decode_getfh(xdr, res->fhandles[i]);
+		if (status)
+			goto out;
+		status = decode_getfattr_label(xdr, res->fattrs[i], res->labels[i], res->server);
+		if (status)
+			goto out;
+	}
+	
+out:
+	return status;
+}
 /*
  * Decode LOOKUP_ROOT response
  */
@@ -7430,6 +7496,7 @@ struct rpc_procinfo	nfs4_procedures[] = {
 	PROC(LOOKUP,		enc_lookup,		dec_lookup),
 	PROC(LOOKUP_ROOT,	enc_lookup_root,	dec_lookup_root),
 	PROC(CHAIN_LOOKUP,	enc_chain_lookup,	dec_chain_lookup),
+	PROC(CHAIN_LOOKUP_OPEN,	enc_chain_lookup_open,	dec_chain_lookup_open),
 	PROC(REMOVE,		enc_remove,		dec_remove),
 	PROC(RENAME,		enc_rename,		dec_rename),
 	PROC(LINK,		enc_link,		dec_link),

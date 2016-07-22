@@ -1798,136 +1798,83 @@ static inline unsigned long hash_name(const char *name, unsigned int *hashp)
 
 #endif
 
-static inline int walk_chain(const char *name, struct nameidata *nd)
+static inline int walk_chain(struct nameidata *nd, struct path *path)
 {
-	LIST_HEAD(dchain_list);
-	struct list_head *pos, *q;
 
-	struct dentry *dcurrent = nd->path.dentry;
-	struct dentry *parent = dcurrent;
-	struct inode *first_inode = nd->inode;
-	struct chain_dentry * new_chain;
+	struct list_head *dchain_list = &nd->dchain_list;
+	struct dentry *dentry = nd->path.dentry;
+	struct chain_dentry *new_chain;
 	
 	bool need_lookup;
 	int err = 0;
-	struct qstr this = nd->last;
-	int dentry_count = 0;
-	long len;
-	int type;
-	struct path path;
-//	printk(KERN_ALERT "NFS lookup flags: %d\n", nd->flags);
 
-	//if(nd->flags & LOOKUP_FOLLOW) 
-	//	printk(KERN_ALERT "NFS lookup follow\n");
+	printk(KERN_ALERT "NFS lookup flags: %d\n", nd->flags);	
+	
+	/* all access rights will be permitted later
+	/  this version work without access rights
+	/  err = may_lookup(nd);
+		/  if (err)
+	/	break;	
+	 */
+	if(nd->chain_size){
+		dentry = list_entry(dchain_list->prev, struct chain_dentry, list)->dentry;
+	}
+	else{
+		dentry = nd->path.dentry;
+	}
 
-//	err = follow_managed(&path, nd->flags);
-//	path_to_nameidata(&path, nd);
-//	printk(KERN_ALERT "NFS root mount after: %s, fs: %s\n", nd->root.dentry->d_name.name, nd->root.mnt->mnt_sb->s_type->name);
-	for(;;){
-		
-		
-		/* all access rights will be permitted later
-		/  this version work without access rights
-		/  err = may_lookup(nd);
- 		/  if (err)
-		/	break;
-		 */
-//		printk(KERN_ALERT "NFS name: %s\n", this.name);
+	printk(KERN_ALERT "NFS this.name: %s, len: %u\n", nd->last.name, nd->last.len);
+	printk(KERN_ALERT "NFS parent: %s\n", dentry->d_name.name);
 
-		mutex_lock(&parent->d_inode->i_mutex);
-		dcurrent = lookup_dcache(&this, dcurrent, nd->flags, &need_lookup);
-		mutex_unlock(&parent->d_inode->i_mutex);
+//	mutex_lock(&parent->d_inode->i_mutex);
+	dentry = lookup_dcache(&nd->last, dentry, nd->flags, &need_lookup);
+//	mutex_unlock(&parent->d_inode->i_mutex);
+	path->dentry = dentry;	
+	path->mnt = nd->path.mnt;
+	if(!need_lookup){	
+		printk(KERN_ALERT"walk: put %s\n", nd->path.dentry->d_name.name);
+		path_to_nameidata(path, nd);
+		nd->inode = dentry->d_inode;
 
-		if(!need_lookup){
-			parent = dcurrent;
-			path.dentry = dcurrent;
-			path.mnt = nd->path.mnt;
-			path_to_nameidata(&path, nd);
-			nd->inode = dcurrent->d_inode;
-			if(unlikely(!nd->inode)){
-				err = -ENOENT;
-				goto out;
-			}
-//			printk(KERN_ALERT "NFS cache name: %s, inode: %lu\n", dcurrent->d_name.name, dcurrent->d_inode->i_ino);
-//			dcurrent = nd->path.dentry;
-		} else {
-			new_chain = kmalloc(sizeof(struct chain_dentry), GFP_KERNEL);
-			if(!new_chain){ 
-//				printk(KERN_ALERT "NFS new chain not allocated!\n");
-				return -ENOMEM;
-			}
-
-			new_chain->dentry = dcurrent;
-
-//			dlast = dcurrent;
-			list_add_tail(&new_chain->list, &dchain_list);
-			dentry_count++;			
+		if(unlikely(!nd->inode)){
+			err = -ENOENT;
+			return err;
 		}
-		
-		len = hash_name(name, &this.hash);
-		this.name = name;
-		this.len = len;
 
-		type = LAST_NORM;
-		/*if (name[0] == '.') switch (len) {
-			case 2:
-				if (name[1] == '.') {
-					type = LAST_DOTDOT;
-					nd->flags |= LOOKUP_JUMPED;
-				}
-				break;
-			case 1:
-				type = LAST_DOT;
+		printk(KERN_ALERT "NFS cache name: %s, inode: %lu\n", dentry->d_name.name, dentry->d_inode->i_ino);
+
+	} else {
+
+		new_chain = kmalloc(sizeof(struct chain_dentry), GFP_KERNEL);
+
+		if(!new_chain){ 
+			printk(KERN_ALERT "NFS new chain not allocated!\n");
+			return -ENOMEM;
 		}
-		if (likely(type == LAST_NORM)) {
-			struct dentry *parent = nd->path.dentry;
-			nd->flags &= ~LOOKUP_JUMPED;
-			if (unlikely(parent->d_flags & DCACHE_OP_HASH)) {
-				err = parent->d_op->d_hash(parent, &this);
-				if (err < 0)
-					break;
+		new_chain->dentry = dentry;
+		list_add_tail(&new_chain->list, dchain_list);
+		nd->chain_size++;
+	}
+
+	/*if (name[0] == '.') switch (len) {
+		case 2:
+			if (name[1] == '.') {
+				type = LAST_DOTDOT;
+				nd->flags |= LOOKUP_JUMPED;
 			}
-		}*/
+			break;
+		case 1:
+			type = LAST_DOT;
+	}
+	if (likely(type == LAST_NORM)) {
+		struct dentry *parent = nd->path.dentry;
 		nd->flags &= ~LOOKUP_JUMPED;
-
-		nd->last = this;
-		nd->last_type = type;
-		
-		if (!name[len])
-			break;
-			
-		do {
-			len++;
-		} while (unlikely(name[len] == '/'));
-		if (!name[len])
-			break;
-		
-		name += len;
-
-		//err = lookup_fast(nd, )
-
-	}
-
-	if(!dentry_count) 
-		return 0;
-
-	dcurrent = first_inode->i_op->chain_lookup(nd, &dchain_list, dentry_count);
-
-	if (IS_ERR(dcurrent)) 
-		err = PTR_ERR(dcurrent);
-
-	list_for_each_safe(pos, q, &dchain_list){
-		new_chain = list_entry(pos, struct chain_dentry, list);
-		dput(nd->path.dentry);
-		nd->path.dentry = new_chain->dentry;
-		list_del(pos);
-		kfree(new_chain);
-	}
-
-	nd->inode = nd->path.dentry->d_inode;
-out:
-	if(unlikely(!nd->inode))
-		terminate_walk(nd);
+		if (unlikely(parent->d_flags & DCACHE_OP_HASH)) {
+			err = parent->d_op->d_hash(parent, &this);
+			if (err < 0)
+				break;
+		}
+	}*/
 	return err;
 }
 
@@ -1955,9 +1902,9 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		long len;
 		int type;
 		
-		err = may_lookup(nd);
- 		if (err)
-			break;
+		//err = may_lookup(nd);
+ 		//if (err)
+		//	break;
 	
 		len = hash_name(name, &this.hash);
 		this.name = name;
@@ -2001,11 +1948,11 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		name += len;
 		
 		if(likely(nd->inode) && nd->inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
-				//printk(KERN_ALERT "chain FS inode\n");
-				return walk_chain(name, nd);
-		}
+			printk(KERN_ALERT "chain FS inode\n");
+			err = walk_chain(nd, &next);
+		} else
+			err = walk_component(nd, &next, LOOKUP_FOLLOW);
 
-		err = walk_component(nd, &next, LOOKUP_FOLLOW);
 		if (err < 0)
 			return err;
 
@@ -2031,6 +1978,9 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 	nd->last_type = LAST_ROOT; /* if there are only slashes... */
 	nd->flags = flags | LOOKUP_JUMPED;
 	nd->depth = 0;
+	nd->chain_size = 0;
+	INIT_LIST_HEAD(&nd->dchain_list);
+
 	if (flags & LOOKUP_ROOT) {
 		struct dentry *root = nd->root.dentry;
 		struct inode *inode = root->d_inode;
@@ -2117,6 +2067,13 @@ static inline int lookup_last(struct nameidata *nd, struct path *path)
 		nd->flags |= LOOKUP_FOLLOW | LOOKUP_DIRECTORY;
 
 	nd->flags &= ~LOOKUP_PARENT;
+
+	if(nd->path.dentry->d_inode && nd->path.dentry->d_inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
+		walk_chain(nd, path);
+		if(!nd->chain_size)
+			return 0;
+		return nd->path.dentry->d_inode->i_op->chain_lookup(nd);
+	}
 	return walk_component(nd, path, nd->flags & LOOKUP_FOLLOW);
 }
 
@@ -2912,7 +2869,11 @@ static int atomic_open(struct nameidata *nd, struct dentry *dentry,
 
 	file->f_path.dentry = DENTRY_NOT_SET;
 	file->f_path.mnt = nd->path.mnt;
-	error = dir->i_op->atomic_open(dir, dentry, file, open_flag, mode,
+	if(dir->i_op->chain_lookup_open)
+		error = dir->i_op->chain_lookup_open(nd, dentry, file, open_flag,
+					  mode, opened);
+	else
+		error = dir->i_op->atomic_open(dir, dentry, file, open_flag, mode,
 				      opened);
 	if (error < 0) {
 		if (create_error && error == -ENOENT)

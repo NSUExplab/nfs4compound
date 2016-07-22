@@ -1661,7 +1661,6 @@ struct chain_dentry{
 struct inode_operations {
 	struct dentry * (*lookup) (struct inode *,struct dentry *, unsigned int);
 	
-	struct dentry * (*chain_lookup) (struct nameidata *, struct list_head *, int size);
 
 	void * (*follow_link) (struct dentry *, struct nameidata *);
 	int (*permission) (struct inode *, int);
@@ -1689,6 +1688,10 @@ struct inode_operations {
 		      u64 len);
 	int (*update_time)(struct inode *, struct timespec *, int);
 	int (*atomic_open)(struct inode *, struct dentry *,
+			   struct file *, unsigned open_flag,
+			   umode_t create_mode, int *opened);
+	int (*chain_lookup) (struct nameidata *);
+	int (*chain_lookup_open) (struct nameidata *, struct dentry *,
 			   struct file *, unsigned open_flag,
 			   umode_t create_mode, int *opened);
 } ____cacheline_aligned;
