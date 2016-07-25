@@ -1433,19 +1433,19 @@ int nfs_allocate_handles(struct nfs_fh ***fhandles, struct nfs_fattr ***fattrs, 
 	*fattrs = kmalloc(sizeof(struct nfs_fattr*) * size, GFP_KERNEL);
 	*labels = kmalloc(sizeof(struct nfs4_label*) * size, GFP_KERNEL);
 
-	printk(KERN_ALERT "NFS size is: %d and pointers: %p, %p, %p\n", size, *fhandles, *fattrs, *labels);
+	//printk(KERN_ALERT "NFS size is: %d and pointers: %p, %p, %p\n", size, *fhandles, *fattrs, *labels);
 
 	if(!*fattrs || !*fhandles || !*labels)
 		return -ENOMEM;
 
 	for(i = 0; i < size; i++){
-		printk(KERN_ALERT "NFS allocating: %d\n", i);
+		//printk(KERN_ALERT "NFS allocating: %d\n", i);
 		(*fhandles)[i] = nfs_alloc_fhandle();
-		printk(KERN_ALERT "NFS allocating fhandle: %d, %p\n", i, (*fhandles)[i]);
+		//printk(KERN_ALERT "NFS allocating fhandle: %d, %p\n", i, (*fhandles)[i]);
 		(*fattrs)[i] = nfs_alloc_fattr();
-		printk(KERN_ALERT "NFS allocating fattr: %d, %p\n", i, (*fattrs)[i]);
+		//printk(KERN_ALERT "NFS allocating fattr: %d, %p\n", i, (*fattrs)[i]);
 		(*labels)[i] = nfs4_label_alloc(NFS_SERVER(dir), GFP_NOWAIT);
-		printk(KERN_ALERT "NFS allocating label: %d\n", i);
+		//printk(KERN_ALERT "NFS allocating label: %d\n", i);
 		if (!(*fhandles)[i] || !(*fattrs)[i])
 			return -ENOMEM;
 	}
@@ -1474,13 +1474,14 @@ struct dentry * nfs_fill_dchain_list(struct nameidata *nd, struct nfs_fh **fhand
 		res = ERR_CAST(inode);
 
 		if (IS_ERR(res)) {
+			printk(KERN_ALERT "NFS no entry: %s\n", dentry->d_name.name);
 			res = d_materialise_unique(dentry, NULL);
 		} else {
 			res = d_materialise_unique(dentry, inode);
 		}
-		printk(KERN_ALERT"NFS: current dentry: %s\n", dentry->d_name.name);
+		//printk(KERN_ALERT"NFS: current dentry: %s\n", dentry->d_name.name);
 		if(i < nd->chain_size){
-			printk(KERN_ALERT"PUT IT!!!\n");
+			//printk(KERN_ALERT"PUT IT!!!\n");
 			dput(dentry);
 		}
 
@@ -1514,7 +1515,7 @@ int nfs_chain_lookup_open(struct nameidata *nd, struct dentry *dentry,
 			   struct file * file, unsigned open_flag,
 			   umode_t create_mode, int *opened) {
 	int error = 0;
-	
+
 	error = NFS_PROTO(nd->inode)->chain_lookup_open(NULL, NULL, NULL, NULL, NULL, 0);
 	return error;
 }	
@@ -1531,7 +1532,7 @@ int nfs_chain_lookup(struct nameidata *nd) {
 	struct inode* dir;
 	struct list_head *dchain_list = &nd->dchain_list;
 
-	printk(KERN_ALERT "NFS parent : %s, ino: %lu\n", parent->d_name.name, parent->d_inode->i_ino);
+	//printk(KERN_ALERT "NFS parent : %s, ino: %lu\n", parent->d_name.name, parent->d_inode->i_ino);
 
 	dir = parent->d_inode;
 	
@@ -1540,11 +1541,11 @@ int nfs_chain_lookup(struct nameidata *nd) {
 	if(error < 0)
 		goto out;
 
-	printk(KERN_ALERT "NFS allocated handles\n");
+	//printk(KERN_ALERT "NFS allocated handles\n");
 
 	nfs_block_sillyrename(parent);
 	
-	printk(KERN_ALERT "NFS proc chain : %d\n", nd->chain_size);
+	//printk(KERN_ALERT "NFS proc chain : %d\n", nd->chain_size);
 
 	error = NFS_PROTO(dir)->chain_lookup(dir, dchain_list, fhandles, fattrs, labels, nd->chain_size);
 
@@ -2553,7 +2554,7 @@ int nfs_permission(struct inode *inode, int mask)
 {
 	struct rpc_cred *cred;
 	int res = 0;
-
+	return res;
 	nfs_inc_stats(inode, NFSIOS_VFSACCESS);
 
 	if ((mask & (MAY_READ | MAY_WRITE | MAY_EXEC)) == 0)
