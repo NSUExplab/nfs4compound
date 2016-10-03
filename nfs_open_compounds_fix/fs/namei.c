@@ -1808,7 +1808,6 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 	bool need_lookup;
 	int err = 0;
 
-	//printk(KERN_ALERT "NFS lookup flags: %d\n", nd->flags);	
 	
 	/* all access rights will be permitted later
 	/  this version work without access rights
@@ -1816,43 +1815,29 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 		/  if (err)
 	/	break;	
 	 */
-	if(nd->chain_size){
+	if(nd->chain_size)
 		dentry = list_entry(dchain_list->prev, struct chain_dentry, list)->dentry;
-	}
-	else{
+	else
 		dentry = nd->path.dentry;
-	}
-
-	//printk(KERN_ALERT "NFS this.name: %s, len: %u\n", nd->last.name, nd->last.len);
-	//printk(KERN_ALERT "NFS parent: %s\n", dentry->d_name.name);
 
 //	mutex_lock(&parent->d_inode->i_mutex);
 	dentry = lookup_dcache(&nd->last, dentry, nd->flags, &need_lookup);
 //	mutex_unlock(&parent->d_inode->i_mutex);
 	path->dentry = dentry;	
 	path->mnt = nd->path.mnt;
-	if(!need_lookup){	
-		//printk(KERN_ALERT"walk: put %s\n", nd->path.dentry->d_name.name);
-
+	if(!need_lookup) {	
 		path_to_nameidata(path, nd);
 		nd->inode = dentry->d_inode;
 
 		if(unlikely(!dentry->d_inode)){
-			printk(KERN_ALERT "NFS no entry by INODE: %s\n", dentry->d_name.name);
 			err = -ENOENT;
 			return err;
 		}
-
-		printk(KERN_ALERT "NFS cache name: %s, inode: %lu\n", dentry->d_name.name, dentry->d_inode->i_ino);
-
 	} else {
-
 		new_chain = kmalloc(sizeof(struct chain_dentry), GFP_KERNEL);
 
-		if(!new_chain){ 
-			//printk(KERN_ALERT "NFS new chain not allocated!\n");
+		if(!new_chain)
 			return -ENOMEM;
-		}
 		new_chain->dentry = dentry;
 		list_add_tail(&new_chain->list, dchain_list);
 		nd->chain_size++;
@@ -1949,10 +1934,9 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		
 		name += len;
 		
-		if(likely(nd->inode) && nd->inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
-			printk(KERN_ALERT "chain FS inode\n");
+		if(likely(nd->inode) && nd->inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT))
 			err = walk_chain(nd, &next);
-		} else
+		else
 			err = walk_component(nd, &next, LOOKUP_FOLLOW);
 
 		if (err < 0)
@@ -3325,6 +3309,8 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 	if(nd->path.dentry->d_inode && nd->path.dentry->d_inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
 		if(nd->chain_size)
 			error = nd->path.dentry->d_inode->i_op->chain_lookup(nd);
+		if (unlikely(error))
+			goto out;
 	}
 	error = do_last(nd, &path, file, op, &opened, pathname);
 	while (unlikely(error > 0)) { /* trailing symlink */

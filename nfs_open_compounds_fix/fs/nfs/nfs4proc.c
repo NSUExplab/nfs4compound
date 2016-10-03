@@ -3187,7 +3187,6 @@ static int _nfs4_proc_getattr(struct nfs_server *server, struct nfs_fh *fhandle,
 		.rpc_argp = &args,
 		.rpc_resp = &res,
 	};
-	dump_stack();
 	args.bitmask = nfs4_bitmask(server, label);
 
 	nfs_fattr_init(fattr);
@@ -3297,8 +3296,6 @@ static int _nfs4_proc_lookup(struct rpc_clnt *clnt, struct inode *dir,
 		.rpc_resp = &res,
 	};
 
-	dump_stack();
-
 	args.bitmask = nfs4_bitmask(server, label);
 
 	nfs_fattr_init(fattr);
@@ -3405,18 +3402,11 @@ static int nfs4_proc_chain_lookup(struct inode *dir, struct list_head *dchain_li
 	rpc_proc->p_arglen = arglen * size * 2;
 	rpc_proc->p_replen = replen * size * 2;
 	
-	printk(KERN_ALERT "NFS replen: %d, size: %d\n", arglen, rpc_proc->p_arglen);
-
-	printk(KERN_ALERT "NFS server: %lu\n", (long unsigned)server);
-
 	args.bitmask = nfs4_bitmask(server, NULL);
 	
-	printk(KERN_ALERT "NFS fattr init\n");
-
 	for(i = 0; i < size; ++i)
 		nfs_fattr_init(fattrs[i]);
 
-	printk(KERN_ALERT "NFS call chain_lookup\n");
 	status = nfs4_call_sync(client, server, &msg, &args.seq_args, &res.seq_res, 0);
 	
 	rpc_proc->p_arglen = arglen;
@@ -3456,14 +3446,11 @@ static int nfs4_proc_chain_lookup_open(struct inode *dir, struct list_head *dcha
 	rpc_proc->p_arglen = arglen * size * 2;
 	rpc_proc->p_replen = replen * size * 2;
 	
-	printk(KERN_ALERT "NFS replen: %d, size: %d\n", arglen, rpc_proc->p_arglen);
-
 	args.bitmask = nfs4_bitmask(server, labels[size - 1]);
 
 	for(i = 0; i < size; ++i)
 		nfs_fattr_init(fattrs[i]);
 
-//	dprintk("NFS call chain_lookup %s\n", );
 	status = nfs4_call_sync(client, server, &msg, &args.seq_args, &res.seq_res, 0);
 	
 	rpc_proc->p_arglen = arglen;
@@ -3502,7 +3489,6 @@ static int _nfs4_proc_access(struct inode *inode, struct nfs_access_entry *entry
 	};
 	int mode = entry->mask;
 	int status = 0;
-	dump_stack();
 	/*
 	 * Determine which access bits we want to ask for...
 	 */
