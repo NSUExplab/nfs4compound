@@ -3399,9 +3399,9 @@ static int nfs4_proc_chain_lookup(struct inode *dir, struct list_head *dchain_li
 	arglen = rpc_proc->p_arglen;
 	replen = rpc_proc->p_replen;
 	
-	rpc_proc->p_arglen = arglen * size * 2;
-	rpc_proc->p_replen = replen * size * 2;
-	
+	rpc_proc->p_arglen = arglen * size;
+	rpc_proc->p_replen = replen * size;
+	dprintk(KERN_ALERT "p_arglen %d", rpc_proc->p_arglen);
 	args.bitmask = nfs4_bitmask(server, NULL);
 	
 	for(i = 0; i < size; ++i)

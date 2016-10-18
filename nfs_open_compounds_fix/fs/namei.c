@@ -1798,6 +1798,16 @@ static inline unsigned long hash_name(const char *name, unsigned int *hashp)
 
 #endif
 
+static void dchain_list_pop(struct nameidata *nd){
+	struct chain_dentry *dchain_entry;	
+	struct list_head *pos = nd->dchain_list.prev;
+	dchain_entry = list_entry(pos, struct chain_dentry, list);
+	dput(dchain_entry->dentry);
+	list_del(pos);
+	kfree(dchain_entry);
+	nd->chain_size--;
+}
+
 static inline int walk_chain(struct nameidata *nd, struct path *path)
 {
 
@@ -1807,14 +1817,25 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 	
 	bool need_lookup;
 	int err = 0;
-
-	
+	if(unlikely(nd->last_type != LAST_NORM)){
+		if(nd->chain_size > 0 && nd->last_type == LAST_DOTDOT){
+			dchain_list_pop(nd);
+			return 0;
+		}
+		else if(nd->chain_size > 0 && nd->last_type == LAST_DOT){
+			return 0;
+		}
+		else{
+			err = handle_dots(nd, nd->last_type);
+			return err;	
+		}
+	}
 	/* all access rights will be permitted later
 	/  this version work without access rights
 	/  err = may_lookup(nd);
 		/  if (err)
 	/	break;	
-	 */
+	*/
 	if(nd->chain_size)
 		dentry = list_entry(dchain_list->prev, struct chain_dentry, list)->dentry;
 	else
@@ -1826,6 +1847,9 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 	path->dentry = dentry;	
 	path->mnt = nd->path.mnt;
 	if(!need_lookup) {	
+		if(d_mountpoint(path->dentry)){
+			follow_mount(path);
+		}
 		path_to_nameidata(path, nd);
 		nd->inode = dentry->d_inode;
 
@@ -1841,6 +1865,10 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 		new_chain->dentry = dentry;
 		list_add_tail(&new_chain->list, dchain_list);
 		nd->chain_size++;
+		if(nd->chain_size >= 30){
+			err = nd->inode->i_op->chain_lookup(nd);
+			return err;
+		}
 	}
 
 	/*if (name[0] == '.') switch (len) {
@@ -1934,10 +1962,13 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		
 		name += len;
 		
-		if(likely(nd->inode) && nd->inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT))
+		if(likely(nd->inode) && nd->inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
 			err = walk_chain(nd, &next);
-		else
+			printk(KERN_ALERT "NFS walk_chain %s, flags %x\n", nd->last.name, nd->flags);
+		}
+		else{
 			err = walk_component(nd, &next, LOOKUP_FOLLOW);
+		}
 
 		if (err < 0)
 			return err;
@@ -2061,6 +2092,8 @@ static inline int lookup_last(struct nameidata *nd, struct path *path)
 			return err;
 		if(!nd->chain_size)
 			return 0;
+		path->dentry = nd->path.dentry;
+		path->mnt = nd->path.mnt;
 		return nd->path.dentry->d_inode->i_op->chain_lookup(nd);
 	}
 	return walk_component(nd, path, nd->flags & LOOKUP_FOLLOW);

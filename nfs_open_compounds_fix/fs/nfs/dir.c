@@ -1450,7 +1450,7 @@ static int nfs_free_dchain_list(struct nameidata *nd){
 	struct list_head *pos, *q;
 	struct chain_dentry *dchain_entry;
 	struct list_head *dchain_list = &nd->dchain_list;
-
+	nd->chain_size = 0;
 	list_for_each_safe(pos, q, dchain_list){
 		dchain_entry = list_entry(pos, struct chain_dentry, list);
 		//dput(nd->path.dentry);
@@ -1460,6 +1460,23 @@ static int nfs_free_dchain_list(struct nameidata *nd){
 	}
 	return 0;
 }
+
+/*static int nfs_free_dchain_list_to_dentry(struct nameidata *nd, struct dentry* dentry){
+	struct list_head *pos, *q;
+	struct chain_dentry *dchain_entry;
+	struct list_head *dchain_list = &nd->dchain_list;
+	nd->chain_size = 0;
+	list_for_each_safe(pos, q, dchain_list){
+		dchain_entry = list_entry(pos, struct chain_dentry, list);
+		//dput(nd->path.dentry);
+		//nd->path.dentry = dchain_entry->dentry;
+		if(dchain_entry->dentry == dentry)
+			break;
+		list_del(pos);
+		kfree(dchain_entry);
+	}
+	return 0;
+}*/
 
 static struct dentry * nfs_fill_dchain_list(struct nameidata *nd, struct nfs_fh **fhandles, 
 				struct nfs_fattr **fattrs, struct nfs4_label **labels, struct dentry *parent){
@@ -1487,14 +1504,32 @@ static struct dentry * nfs_fill_dchain_list(struct nameidata *nd, struct nfs_fh 
 		else
 			res = d_materialise_unique(dentry, inode);
 
-		if(i < nd->chain_size)
-			dput(dentry);
-
 		if (res != NULL) {
 			if (IS_ERR(res))
 				return res;
 			dchain_entry->dentry = res;
 		}
+
+		if(d_is_symlink(dentry)){
+			// nd->path.dentry = dentry;
+			// nd->inode = inode;
+			printk(KERN_ALERT "NFS dentry symlink %s, inode %ld\n", dentry->d_name.name, dentry->d_inode->i_ino);
+			return ERR_PTR(1);
+		}
+		if(i < nd->chain_size)
+			dput(dentry);
+		/*if (should_follow_link(dentry, 1)) {
+			if (nd->flags & LOOKUP_RCU) {
+				if (unlikely(unlazy_walk(nd, dentry))) {
+					err = -ECHILD;
+					goto out_err;
+				}
+			}
+			nd->path.dentry = dentry;
+			nd->inode = inode;
+			BUG_ON(inode != dentry->d_inode);
+			return ERR_PTR(1);
+		}*/
 	}
 	nd->path.dentry = dentry;
 	if(!IS_ERR(ERR_CAST(inode)))
@@ -1557,7 +1592,8 @@ int nfs_chain_lookup(struct nameidata *nd) {
 		goto out_unblock_sillyrename;
 	
 	res = nfs_fill_dchain_list(nd, fhandles, fattrs, labels, parent);
-
+	if(PTR_ERR(res) == 1)
+		error = 1;
 out_unblock_sillyrename:
 	nfs_unblock_sillyrename(parent);
 out:
