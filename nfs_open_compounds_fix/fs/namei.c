@@ -1964,7 +1964,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		
 		if(likely(nd->inode) && nd->inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
 			err = walk_chain(nd, &next);
-			printk(KERN_ALERT "NFS walk_chain %s, flags %x\n", nd->last.name, nd->flags);
+			// printk(KERN_ALERT "NFS walk_chain %s, flags %x\n", nd->last.name, nd->flags);
 		}
 		else{
 			err = walk_component(nd, &next, LOOKUP_FOLLOW);
