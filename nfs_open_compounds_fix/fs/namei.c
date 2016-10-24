@@ -1356,6 +1356,11 @@ static struct dentry *lookup_dcache(struct qstr *name, struct dentry *dir,
 	*need_lookup = false;
 	dentry = d_lookup(dir, name);
 	if (dentry) {
+		if (d_is_chain_temp(dentry)){
+			*need_lookup = true;
+			return dentry;
+		}
+
 		if (dentry->d_flags & DCACHE_OP_REVALIDATE) {
 			error = d_revalidate(dentry, flags);
 			if (unlikely(error <= 0)) {
@@ -1843,7 +1848,13 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 
 //	mutex_lock(&parent->d_inode->i_mutex);
 	dentry = lookup_dcache(&nd->last, dentry, nd->flags, &need_lookup);
+	printk(KERN_ALERT "lookup_dcache dentry %s\n", dentry->d_name.name);
 //	mutex_unlock(&parent->d_inode->i_mutex);
+	if(IS_ERR(dentry)){
+		err = PTR_ERR(dentry);
+		goto out_err;
+	}
+
 	path->dentry = dentry;	
 	path->mnt = nd->path.mnt;
 	if(!need_lookup) {	
@@ -1855,13 +1866,18 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 
 		if(unlikely(!dentry->d_inode)){
 			err = -ENOENT;
-			return err;
+			goto out_err;
 		}
 	} else {
 		new_chain = kmalloc(sizeof(struct chain_dentry), GFP_KERNEL);
 
-		if(!new_chain)
-			return -ENOMEM;
+		if(!new_chain) {
+			err = -ENOMEM;
+			goto out_err;
+		}
+
+		d_set_type(dentry, DCACHE_CHAIN_TEMP);
+
 		new_chain->dentry = dentry;
 		list_add_tail(&new_chain->list, dchain_list);
 		nd->chain_size++;
@@ -1890,6 +1906,9 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 				break;
 		}
 	}*/
+	return err;
+out_err:
+	terminate_walk(nd);
 	return err;
 }
 
@@ -2086,15 +2105,18 @@ static inline int lookup_last(struct nameidata *nd, struct path *path)
 
 	nd->flags &= ~LOOKUP_PARENT;
 
-	if(nd->path.dentry->d_inode && nd->path.dentry->d_inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
+	if (nd->path.dentry->d_inode && nd->path.dentry->d_inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
 		err = walk_chain(nd, path);
-		if(err)
+		if (err)
 			return err;
-		if(!nd->chain_size)
+		if (!nd->chain_size)
 			return 0;
-		path->dentry = nd->path.dentry;
-		path->mnt = nd->path.mnt;
-		return nd->path.dentry->d_inode->i_op->chain_lookup(nd);
+
+		err = nd->path.dentry->d_inode->i_op->chain_lookup(nd);
+		if (err){
+			terminate_walk(nd);
+			return err;
+		}
 	}
 	return walk_component(nd, path, nd->flags & LOOKUP_FOLLOW);
 }
@@ -3342,8 +3364,10 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 	if(nd->path.dentry->d_inode && nd->path.dentry->d_inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
 		if(nd->chain_size)
 			error = nd->path.dentry->d_inode->i_op->chain_lookup(nd);
-		if (unlikely(error))
+		if (unlikely(error)) {
+			terminate_walk(nd);
 			goto out;
+		}
 	}
 	error = do_last(nd, &path, file, op, &opened, pathname);
 	while (unlikely(error > 0)) { /* trailing symlink */

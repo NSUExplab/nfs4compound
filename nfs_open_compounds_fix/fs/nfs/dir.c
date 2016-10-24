@@ -1447,12 +1447,21 @@ static int nfs_allocate_handles(struct nfs_fh ***fhandles, struct nfs_fattr ***f
 }
 
 static int nfs_free_dchain_list(struct nameidata *nd){
+	int i = 0;
 	struct list_head *pos, *q;
 	struct chain_dentry *dchain_entry;
 	struct list_head *dchain_list = &nd->dchain_list;
 	nd->chain_size = 0;
 	list_for_each_safe(pos, q, dchain_list){
+		struct dentry *dentry;
 		dchain_entry = list_entry(pos, struct chain_dentry, list);
+		dentry = dchain_entry->dentry;
+		i++;
+
+		if (i < nd->chain_size) {
+			printk(KERN_ALERT "dput in free_list dentry %s\n", dentry->d_name.name);
+			dput(dentry);
+		}
 		//dput(nd->path.dentry);
 		//nd->path.dentry = dchain_entry->dentry;
 		list_del(pos);
@@ -1489,7 +1498,6 @@ static struct dentry * nfs_fill_dchain_list(struct nameidata *nd, struct nfs_fh 
 	struct list_head *dchain_list = &nd->dchain_list;
 
 	list_for_each(cur_pos, dchain_list){
-
 		inode = NULL;
 		dchain_entry = list_entry(cur_pos, struct chain_dentry, list);
 		dentry = dchain_entry->dentry;
@@ -1499,10 +1507,15 @@ static struct dentry * nfs_fill_dchain_list(struct nameidata *nd, struct nfs_fh 
 
 		res = ERR_CAST(inode);
 
+		//we will must hold parent i_mutex before d_materialise_unique !!!!!!!!!!!!!!!
 		if (IS_ERR(res))
 			res = d_materialise_unique(dentry, NULL);
 		else
 			res = d_materialise_unique(dentry, inode);
+
+		/* for last dentry dput mustn't be called*/
+		//if(i < nd->chain_size)
+		//	dput(dentry);
 
 		if (res != NULL) {
 			if (IS_ERR(res))
