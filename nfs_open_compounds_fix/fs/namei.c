@@ -1848,7 +1848,6 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 
 //	mutex_lock(&parent->d_inode->i_mutex);
 	dentry = lookup_dcache(&nd->last, dentry, nd->flags, &need_lookup);
-	printk(KERN_ALERT "lookup_dcache dentry %s\n", dentry->d_name.name);
 //	mutex_unlock(&parent->d_inode->i_mutex);
 	if(IS_ERR(dentry)){
 		err = PTR_ERR(dentry);

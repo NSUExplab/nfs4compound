@@ -1451,7 +1451,7 @@ static int nfs_free_dchain_list(struct nameidata *nd){
 	struct list_head *pos, *q;
 	struct chain_dentry *dchain_entry;
 	struct list_head *dchain_list = &nd->dchain_list;
-	nd->chain_size = 0;
+
 	list_for_each_safe(pos, q, dchain_list){
 		struct dentry *dentry;
 		dchain_entry = list_entry(pos, struct chain_dentry, list);
@@ -1513,24 +1513,12 @@ static struct dentry * nfs_fill_dchain_list(struct nameidata *nd, struct nfs_fh 
 		else
 			res = d_materialise_unique(dentry, inode);
 
-		/* for last dentry dput mustn't be called*/
-		//if(i < nd->chain_size)
-		//	dput(dentry);
-
 		if (res != NULL) {
 			if (IS_ERR(res))
 				return res;
 			dchain_entry->dentry = res;
 		}
 
-		if(d_is_symlink(dentry)){
-			// nd->path.dentry = dentry;
-			// nd->inode = inode;
-			printk(KERN_ALERT "NFS dentry symlink %s, inode %ld\n", dentry->d_name.name, dentry->d_inode->i_ino);
-			return ERR_PTR(1);
-		}
-		if(i < nd->chain_size)
-			dput(dentry);
 		/*if (should_follow_link(dentry, 1)) {
 			if (nd->flags & LOOKUP_RCU) {
 				if (unlikely(unlazy_walk(nd, dentry))) {
@@ -1544,6 +1532,7 @@ static struct dentry * nfs_fill_dchain_list(struct nameidata *nd, struct nfs_fh 
 			return ERR_PTR(1);
 		}*/
 	}
+	
 	nd->path.dentry = dentry;
 	if(!IS_ERR(ERR_CAST(inode)))
 		nd->inode = inode;
