@@ -1458,15 +1458,14 @@ static int nfs_free_dchain_list(struct nameidata *nd){
 		dentry = dchain_entry->dentry;
 		i++;
 
-		if (i < nd->chain_size) {
-			printk(KERN_ALERT "dput in free_list dentry %s\n", dentry->d_name.name);
+		if (i < nd->chain_size)
 			dput(dentry);
-		}
-		//dput(nd->path.dentry);
-		//nd->path.dentry = dchain_entry->dentry;
+
 		list_del(pos);
 		kfree(dchain_entry);
 	}
+	nd->chain_size = 0;
+
 	return 0;
 }
 
@@ -1519,20 +1518,8 @@ static struct dentry * nfs_fill_dchain_list(struct nameidata *nd, struct nfs_fh 
 			dchain_entry->dentry = res;
 		}
 
-		/*if (should_follow_link(dentry, 1)) {
-			if (nd->flags & LOOKUP_RCU) {
-				if (unlikely(unlazy_walk(nd, dentry))) {
-					err = -ECHILD;
-					goto out_err;
-				}
-			}
-			nd->path.dentry = dentry;
-			nd->inode = inode;
-			BUG_ON(inode != dentry->d_inode);
-			return ERR_PTR(1);
-		}*/
 	}
-	
+
 	nd->path.dentry = dentry;
 	if(!IS_ERR(ERR_CAST(inode)))
 		nd->inode = inode;
