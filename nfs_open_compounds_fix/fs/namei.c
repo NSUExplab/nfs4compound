@@ -1813,6 +1813,8 @@ static inline void dchain_list_pop(struct nameidata *nd){
 	nd->chain_size--;
 }
 
+static inline int walk_chain(struct nameidata *nd, struct path *path, int follow);
+
 static inline int free_dchain_list(struct nameidata *nd){
 	int i = 0;
 	struct list_head *pos, *q;
@@ -1823,6 +1825,8 @@ static inline int free_dchain_list(struct nameidata *nd){
 		struct dentry *dentry;
 		dchain_entry = list_entry(pos, struct chain_dentry, list);
 		dentry = dchain_entry->dentry;
+		// printk(KERN_ALERT "free dentry %s\n", dentry->d_name.name);
+
 		i++;
 
 		if (i < nd->chain_size)
@@ -1843,7 +1847,7 @@ static int chain_lookup(struct nameidata *nd){
 	return err;
 }
 
-static inline int walk_chain(struct nameidata *nd, struct path *path)
+static inline int walk_chain(struct nameidata *nd, struct path *path, int follow)
 {
 
 	struct list_head *dchain_list = &nd->dchain_list;
@@ -1854,6 +1858,7 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 	int err = 0;
 
 	if(unlikely(nd->last_type != LAST_NORM)){
+		// printk(KERN_ALERT "NFS last type not norm\n");
 		if(nd->chain_size > 0 && nd->last_type == LAST_DOTDOT){
 			dchain_list_pop(nd);
 			if(!nd->chain_size)
@@ -1891,11 +1896,23 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 		goto out_err;
 	}
 
-	path->dentry = dentry;	
+	if(IS_ERR(dentry)){
+		err = PTR_ERR(dentry);
+		goto out_err;
+	}
+	path->dentry = dentry;
 	path->mnt = nd->path.mnt;
-	if(!need_lookup) {	
+	// printk(KERN_ALERT "NFS walk name %s, walk dentry %s\n", nd->last.name, dentry->d_name.name);
+	
+	if(!need_lookup) {
+		// printk(KERN_ALERT " cache\n");
+
 		if(d_mountpoint(path->dentry)) {
 			follow_mount(path);
+		}
+		if(should_follow_link(path->dentry, follow)){
+			// printk(KERN_ALERT "NFS symlink in walk_chain %s\n", path->dentry->d_name.name);
+			return 1;
 		}
 
 		path_to_nameidata(path, nd);
@@ -1910,6 +1927,7 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 			return -ENOENT;
 		}
 	} else {
+		// printk(KERN_ALERT " new\n");
 		new_chain = kmalloc(sizeof(struct chain_dentry), GFP_KERNEL);
 
 		if(!new_chain) {
@@ -1928,6 +1946,7 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 	}
 
 	return err;
+
 out_err:
 	terminate_walk(nd);
 	free_dchain_list(nd);
@@ -2004,8 +2023,9 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		
 		name += len;
 		
-		if(likely(nd->inode) && nd->inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT))
-			err = walk_chain(nd, &next);
+		if(likely(nd->inode) && nd->inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
+			err = walk_chain(nd, &next, LOOKUP_FOLLOW);
+		}
 		else{
 			err = walk_component(nd, &next, LOOKUP_FOLLOW);
 		}
@@ -2127,15 +2147,23 @@ static inline int lookup_last(struct nameidata *nd, struct path *path)
 	nd->flags &= ~LOOKUP_PARENT;
 
 	if (nd->path.dentry->d_inode && nd->path.dentry->d_inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
-		err = walk_chain(nd, path);
+		err = walk_chain(nd, path, nd->flags & LOOKUP_FOLLOW);
 		if (err)
 			return err;
+		
 		if (!nd->chain_size)
-			return 0;
+			return err;
 
 		err = chain_lookup(nd);
-		if (err < 0)
+		if(err > 0){
+			path->dentry = nd->path.dentry;
+			path->mnt = nd->path.mnt;
+			nd->path.dentry = path->dentry->d_parent;
+			nd->inode = path->dentry->d_inode;
+		}
+		else if (err < 0){
 			terminate_walk(nd);
+		}
 		return err;
 	}
 	return walk_component(nd, path, nd->flags & LOOKUP_FOLLOW);
@@ -3384,8 +3412,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 	if(nd->path.dentry->d_inode && nd->path.dentry->d_inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
 		if(nd->chain_size)
 			error = chain_lookup(nd);
-
-		if (unlikely(error)) {
+		if (unlikely(error < 0)){
 			terminate_walk(nd);
 			goto out;
 		}
@@ -3401,13 +3428,25 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 			break;
 		}
 		error = may_follow_link(&link, nd);
-		if (unlikely(error))
+		if (unlikely(error)){
 			break;
+		}
 		nd->flags |= LOOKUP_PARENT;
 		nd->flags &= ~(LOOKUP_OPEN|LOOKUP_CREATE|LOOKUP_EXCL);
 		error = follow_link(&link, nd, &cookie);
-		if (unlikely(error))
+		if (unlikely(error)){
 			break;
+		}
+		if(nd->path.dentry->d_inode && nd->path.dentry->d_inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
+			// printk(KERN_ALERT "NFS chain size %d\n", nd->chain_size);
+			if(nd->chain_size)
+				error = chain_lookup(nd);
+			if(error > 0) continue;
+			else if (error){
+				terminate_walk(nd);
+				break;
+			}
+		}
 		error = do_last(nd, &path, file, op, &opened, pathname);
 		put_link(nd, &link, cookie);
 	}

@@ -1446,24 +1446,6 @@ static int nfs_allocate_handles(struct nfs_fh ***fhandles, struct nfs_fattr ***f
 	return 0;
 }
 
-/*
-static int nfs_free_dchain_list_to_dentry(struct nameidata *nd, struct dentry* dentry){
-	struct list_head *pos, *q;
-	struct chain_dentry *dchain_entry;
-	struct list_head *dchain_list = &nd->dchain_list;
-	nd->chain_size = 0;
-	list_for_each_safe(pos, q, dchain_list){
-		dchain_entry = list_entry(pos, struct chain_dentry, list);
-		//dput(nd->path.dentry);
-		//nd->path.dentry = dchain_entry->dentry;
-		if(dchain_entry->dentry == dentry)
-			break;
-		list_del(pos);
-		kfree(dchain_entry);
-	}
-	return 0;
-}*/
-
 static struct dentry * nfs_fill_dchain_list(struct nameidata *nd, struct nfs_fh **fhandles, 
 				struct nfs_fattr **fattrs, struct nfs4_label **labels, struct dentry *parent){
 	int i = 0;
@@ -1484,17 +1466,24 @@ static struct dentry * nfs_fill_dchain_list(struct nameidata *nd, struct nfs_fh 
 
 		res = ERR_CAST(inode);
 
-		if (IS_ERR(res))
+		if (IS_ERR(res)){
 			res = d_materialise_unique(dentry, NULL);
-		else
+		}
+		else{
 			res = d_materialise_unique(dentry, inode);
-
-		if (res != NULL) {
-			if (IS_ERR(res))
-				return res;
-			dchain_entry->dentry = res;
 		}
 
+		if (res != NULL) {
+			if (IS_ERR(res)){
+				return res;
+			}
+			dchain_entry->dentry = res;
+		}
+		
+		if(d_is_symlink(dentry)){
+			res = ERR_PTR(1);
+			break;
+		}
 	}
 
 	nd->path.dentry = dentry;
@@ -1553,17 +1542,21 @@ int nfs_chain_lookup(struct nameidata *nd) {
 	nfs_block_sillyrename(parent);
 	
 	error = NFS_PROTO(dir)->chain_lookup(dir, dchain_list, fhandles, fattrs, labels, nd->chain_size);
-
-	if (error < 0 && error != -ENOENT) 
+	// printk(KERN_ALERT "NFS PROTO error %d\n", error);
+	if (error < 0 && error != -ENOENT && error != -EACCES && error != -40)
 		goto out_unblock_sillyrename;
 	
 	res = nfs_fill_dchain_list(nd, fhandles, fattrs, labels, parent);
-	if(PTR_ERR(res) == 1)
+
+	if(PTR_ERR(res) == 1){
 		error = 1;
+	}
 out_unblock_sillyrename:
 	nfs_unblock_sillyrename(parent);
 out:
 //	mutex_unlock(&parent->d_inode->i_mutex);
+	// printk(KERN_ALERT "NFS before free %d\n", nd->chain_size);
+
 	dput(parent);
 	nfs_free_handles(fhandles, fattrs, labels, nd->chain_size);
 	
