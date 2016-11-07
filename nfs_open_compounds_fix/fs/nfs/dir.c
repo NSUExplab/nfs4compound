@@ -1445,7 +1445,7 @@ static int nfs_allocate_handles(struct nfs_fh ***fhandles, struct nfs_fattr ***f
 	}
 	return 0;
 }
-
+/*
 static int nfs_free_dchain_list(struct nameidata *nd){
 	int i = 0;
 	struct list_head *pos, *q;
@@ -1469,7 +1469,7 @@ static int nfs_free_dchain_list(struct nameidata *nd){
 	return 0;
 }
 
-/*static int nfs_free_dchain_list_to_dentry(struct nameidata *nd, struct dentry* dentry){
+static int nfs_free_dchain_list_to_dentry(struct nameidata *nd, struct dentry* dentry){
 	struct list_head *pos, *q;
 	struct chain_dentry *dchain_entry;
 	struct list_head *dchain_list = &nd->dchain_list;
@@ -1589,7 +1589,7 @@ out:
 //	mutex_unlock(&parent->d_inode->i_mutex);
 	dput(parent);
 	nfs_free_handles(fhandles, fattrs, labels, nd->chain_size);
-	nfs_free_dchain_list(nd);
+	//nfs_free_dchain_list(nd);
 	
 	return error;
 }

@@ -20,8 +20,10 @@ struct nameidata {
 	int		last_type;
 	unsigned	depth;
 	char *saved_names[MAX_NESTED_LINKS + 1];
+
 	struct list_head dchain_list;
 	unsigned int chain_size;
+	struct dentry *chain_parent;
 };
 
 /*

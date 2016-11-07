@@ -1803,7 +1803,7 @@ static inline unsigned long hash_name(const char *name, unsigned int *hashp)
 
 #endif
 
-static void dchain_list_pop(struct nameidata *nd){
+static inline void dchain_list_pop(struct nameidata *nd){
 	struct chain_dentry *dchain_entry;	
 	struct list_head *pos = nd->dchain_list.prev;
 	dchain_entry = list_entry(pos, struct chain_dentry, list);
@@ -1813,42 +1813,82 @@ static void dchain_list_pop(struct nameidata *nd){
 	nd->chain_size--;
 }
 
+static inline int free_dchain_list(struct nameidata *nd){
+	int i = 0;
+	struct list_head *pos, *q;
+	struct chain_dentry *dchain_entry;
+	struct list_head *dchain_list = &nd->dchain_list;
+
+	list_for_each_safe(pos, q, dchain_list){
+		struct dentry *dentry;
+		dchain_entry = list_entry(pos, struct chain_dentry, list);
+		dentry = dchain_entry->dentry;
+		printk(KERN_ALERT "free dentry %s\n", dentry->d_name.name);
+		i++;
+
+		if (i < nd->chain_size)
+			dput(dentry);
+
+		list_del(pos);
+		kfree(dchain_entry);
+	}
+	nd->chain_size = 0;
+
+	return 0;
+}
+
+static int chain_lookup(struct nameidata *nd){
+	int err = nd->inode->i_op->chain_lookup(nd);
+	free_dchain_list(nd);
+	mutex_unlock(&nd->chain_parent->d_inode->i_mutex);
+	return err;
+}
+
 static inline int walk_chain(struct nameidata *nd, struct path *path)
 {
 
 	struct list_head *dchain_list = &nd->dchain_list;
-	struct dentry *dentry = nd->path.dentry;
+	struct dentry *dentry;
 	struct chain_dentry *new_chain;
 	
 	bool need_lookup;
 	int err = 0;
+
 	if(unlikely(nd->last_type != LAST_NORM)){
 		if(nd->chain_size > 0 && nd->last_type == LAST_DOTDOT){
 			dchain_list_pop(nd);
+			if(!nd->chain_size)
+				mutex_unlock(&nd->chain_parent->d_inode->i_mutex);
 			return 0;
 		}
 		else if(nd->chain_size > 0 && nd->last_type == LAST_DOT){
 			return 0;
 		}
 		else{
+			//??? mutex unlock????
+			//??? chain flush???
 			err = handle_dots(nd, nd->last_type);
 			return err;	
 		}
 	}
+
 	/* all access rights will be permitted later
 	/  this version work without access rights
 	/  err = may_lookup(nd);
 		/  if (err)
 	/	break;	
 	*/
+
 	if(nd->chain_size)
 		dentry = list_entry(dchain_list->prev, struct chain_dentry, list)->dentry;
-	else
+	else {
+		nd->chain_parent = nd->path.dentry;
+		mutex_lock(&nd->chain_parent->d_inode->i_mutex);
 		dentry = nd->path.dentry;
+	}
 
-//	mutex_lock(&parent->d_inode->i_mutex);
 	dentry = lookup_dcache(&nd->last, dentry, nd->flags, &need_lookup);
-//	mutex_unlock(&parent->d_inode->i_mutex);
+
 	if(IS_ERR(dentry)){
 		err = PTR_ERR(dentry);
 		goto out_err;
@@ -1857,15 +1897,21 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 	path->dentry = dentry;	
 	path->mnt = nd->path.mnt;
 	if(!need_lookup) {	
-		if(d_mountpoint(path->dentry)){
+		if(d_mountpoint(path->dentry)) {
 			follow_mount(path);
 		}
+
 		path_to_nameidata(path, nd);
 		nd->inode = dentry->d_inode;
 
-		if(unlikely(!dentry->d_inode)){
-			err = -ENOENT;
-			goto out_err;
+		if(nd->chain_size) {
+			printk(KERN_ALERT "multithreading free_dchain_list\n");
+			free_dchain_list(nd);
+		}
+		mutex_unlock(&nd->chain_parent->d_inode->i_mutex);
+		if(unlikely(!dentry->d_inode)) {//maybe d_is_negative(dentry)???
+			terminate_walk(nd);
+			return -ENOENT;
 		}
 	} else {
 		new_chain = kmalloc(sizeof(struct chain_dentry), GFP_KERNEL);
@@ -1880,34 +1926,16 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 		new_chain->dentry = dentry;
 		list_add_tail(&new_chain->list, dchain_list);
 		nd->chain_size++;
-		if(nd->chain_size >= 30){
-			err = nd->inode->i_op->chain_lookup(nd);
-			return err;
-		}
+
+		if(nd->chain_size >= 30)
+			return chain_lookup(nd);
 	}
 
-	/*if (name[0] == '.') switch (len) {
-		case 2:
-			if (name[1] == '.') {
-				type = LAST_DOTDOT;
-				nd->flags |= LOOKUP_JUMPED;
-			}
-			break;
-		case 1:
-			type = LAST_DOT;
-	}
-	if (likely(type == LAST_NORM)) {
-		struct dentry *parent = nd->path.dentry;
-		nd->flags &= ~LOOKUP_JUMPED;
-		if (unlikely(parent->d_flags & DCACHE_OP_HASH)) {
-			err = parent->d_op->d_hash(parent, &this);
-			if (err < 0)
-				break;
-		}
-	}*/
 	return err;
 out_err:
 	terminate_walk(nd);
+	free_dchain_list(nd);
+	mutex_unlock(&nd->chain_parent->d_inode->i_mutex);
 	return err;
 }
 
@@ -2109,7 +2137,7 @@ static inline int lookup_last(struct nameidata *nd, struct path *path)
 		if (!nd->chain_size)
 			return 0;
 
-		err = nd->path.dentry->d_inode->i_op->chain_lookup(nd);
+		chain_lookup(nd);
 		if (err){
 			terminate_walk(nd);
 			return err;
@@ -3360,7 +3388,8 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 		goto out;
 	if(nd->path.dentry->d_inode && nd->path.dentry->d_inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
 		if(nd->chain_size)
-			error = nd->path.dentry->d_inode->i_op->chain_lookup(nd);
+			error = chain_lookup(nd);
+
 		if (unlikely(error)) {
 			terminate_walk(nd);
 			goto out;
