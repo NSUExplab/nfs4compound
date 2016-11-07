@@ -2133,11 +2133,10 @@ static inline int lookup_last(struct nameidata *nd, struct path *path)
 		if (!nd->chain_size)
 			return 0;
 
-		chain_lookup(nd);
-		if (err){
+		err = chain_lookup(nd);
+		if (err < 0)
 			terminate_walk(nd);
-			return err;
-		}
+		return err;
 	}
 	return walk_component(nd, path, nd->flags & LOOKUP_FOLLOW);
 }
