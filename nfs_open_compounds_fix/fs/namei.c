@@ -1823,7 +1823,6 @@ static inline int free_dchain_list(struct nameidata *nd){
 		struct dentry *dentry;
 		dchain_entry = list_entry(pos, struct chain_dentry, list);
 		dentry = dchain_entry->dentry;
-		printk(KERN_ALERT "free dentry %s\n", dentry->d_name.name);
 		i++;
 
 		if (i < nd->chain_size)
@@ -1865,8 +1864,6 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 			return 0;
 		}
 		else{
-			//??? mutex unlock????
-			//??? chain flush???
 			err = handle_dots(nd, nd->last_type);
 			return err;	
 		}
@@ -1904,10 +1901,9 @@ static inline int walk_chain(struct nameidata *nd, struct path *path)
 		path_to_nameidata(path, nd);
 		nd->inode = dentry->d_inode;
 
-		if(nd->chain_size) {
-			printk(KERN_ALERT "multithreading free_dchain_list\n");
+		if(nd->chain_size)
 			free_dchain_list(nd);
-		}
+
 		mutex_unlock(&nd->chain_parent->d_inode->i_mutex);
 		if(unlikely(!dentry->d_inode)) {//maybe d_is_negative(dentry)???
 			terminate_walk(nd);
