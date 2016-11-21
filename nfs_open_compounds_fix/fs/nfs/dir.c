@@ -1714,27 +1714,16 @@ EXPORT_SYMBOL_GPL(nfs_atomic_open);
 
 static int nfs4_lookup_revalidate(struct dentry *dentry, unsigned int flags)
 {
-	struct inode *inode;
+	struct inode *inode = dentry->d_inode;
 	int ret = 0;
-	if(!(flags & LOOKUP_AUTOMOUNT))
-		return 1; //-----------------------------------------------------------------------
 	
-	if (!(flags & LOOKUP_OPEN) || (flags & LOOKUP_DIRECTORY))
-		goto no_open;
-	if (d_mountpoint(dentry))
-		goto no_open;
-	if (NFS_SB(dentry->d_sb)->caps & NFS_CAP_ATOMIC_OPEN_V1)
-		goto no_open;
-
-	inode = dentry->d_inode;
-
 	/* We can't create new files in nfs_open_revalidate(), so we
 	 * optimize away revalidation of negative dentries.
 	 */
 	if (inode == NULL) {
 		struct dentry *parent;
 		struct inode *dir;
-
+	
 		if (flags & LOOKUP_RCU) {
 			parent = ACCESS_ONCE(dentry->d_parent);
 			dir = ACCESS_ONCE(parent->d_inode);
@@ -1752,24 +1741,12 @@ static int nfs4_lookup_revalidate(struct dentry *dentry, unsigned int flags)
 			dput(parent);
 		else if (parent != ACCESS_ONCE(dentry->d_parent))
 			return -ECHILD;
-		goto out;
+		return ret;
 	}
 
-	/* NFS only supports OPEN on regular files */
-	if (!S_ISREG(inode->i_mode))
-		goto no_open;
-	/* We cannot do exclusive creation on a positive dentry */
-	if (flags & LOOKUP_EXCL)
-		goto no_open;
-
-	/* Let f_op->open() actually open (and revalidate) the file */
-	ret = 1;
-
-out:
-	return ret;
-
-no_open:
-	return nfs_lookup_revalidate(dentry, flags);
+	if(nfs_need_revalidate_inode(inode))
+		return 0;
+	return 1;
 }
 
 #endif /* CONFIG_NFSV4 */
