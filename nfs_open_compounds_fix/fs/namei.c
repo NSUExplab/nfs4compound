@@ -1870,7 +1870,7 @@ static inline int walk_chain(struct nameidata *nd, struct path *path, int follow
 		}
 		else{
 			err = handle_dots(nd, nd->last_type);
-			return err;	
+			return err;
 		}
 	}
 
@@ -1905,20 +1905,19 @@ static inline int walk_chain(struct nameidata *nd, struct path *path, int follow
 	// printk(KERN_ALERT "NFS walk name %s, walk dentry %s\n", nd->last.name, dentry->d_name.name);
 	
 	if(!need_lookup) {
-		// printk(KERN_ALERT " cache\n");
-
 		if(d_mountpoint(path->dentry)) {
 			follow_mount(path);
 		}
 		if(should_follow_link(path->dentry, follow)){
-			// printk(KERN_ALERT "NFS symlink in walk_chain %s\n", path->dentry->d_name.name);
+			free_dchain_list(nd);
+			mutex_unlock(&nd->chain_parent->d_inode->i_mutex);
 			return 1;
 		}
 
 		path_to_nameidata(path, nd);
 		nd->inode = dentry->d_inode;
 
-		if(nd->chain_size)
+		//if(nd->chain_size)
 			free_dchain_list(nd);
 
 		mutex_unlock(&nd->chain_parent->d_inode->i_mutex);
