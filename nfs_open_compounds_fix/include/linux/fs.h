@@ -1653,6 +1653,7 @@ struct file_operations_extend {
 };
 struct chain_dentry{
 	struct dentry *dentry;
+	struct qstr name;
 	struct list_head list;
 };
 #define to_fop_extend(fop)	\

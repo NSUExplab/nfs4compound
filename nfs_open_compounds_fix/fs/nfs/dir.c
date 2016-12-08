@@ -1481,7 +1481,7 @@ static struct dentry * nfs_fill_dchain_list(struct nameidata *nd, struct nfs_fh 
 		}
 		
 		if(d_is_symlink(dentry)){
-			res = ERR_PTR(1);
+			res = ERR_PTR(10);
 			break;
 		}
 	}
@@ -1542,20 +1542,18 @@ int nfs_chain_lookup(struct nameidata *nd) {
 	nfs_block_sillyrename(parent);
 	
 	error = NFS_PROTO(dir)->chain_lookup(dir, dchain_list, fhandles, fattrs, labels, nd->chain_size);
-	// printk(KERN_ALERT "NFS PROTO error %d\n", error);
 	if (error < 0 && error != -ENOENT && error != -EACCES && error != -40)
 		goto out_unblock_sillyrename;
 	
 	res = nfs_fill_dchain_list(nd, fhandles, fattrs, labels, parent);
 
-	if(PTR_ERR(res) == 1){
-		error = 1;
+	if(PTR_ERR(res) == 10){
+		error = 10;
 	}
 out_unblock_sillyrename:
 	nfs_unblock_sillyrename(parent);
 out:
 //	mutex_unlock(&parent->d_inode->i_mutex);
-	// printk(KERN_ALERT "NFS before free %d\n", nd->chain_size);
 
 	dput(parent);
 	nfs_free_handles(fhandles, fattrs, labels, nd->chain_size);
