@@ -1010,6 +1010,7 @@ static int nfs_check_verifier(struct inode *dir, struct dentry *dentry,
 		return 1;
 	if (NFS_SERVER(dir)->flags & NFS_MOUNT_LOOKUP_CACHE_NONE)
 		return 0;
+
 	if (!nfs_verify_change_attribute(dir, dentry->d_time))
 		return 0;
 	/* Revalidate nfsi->cache_change_attribute before we declare a match */
@@ -1481,7 +1482,7 @@ static struct dentry * nfs_fill_dchain_list(struct nameidata *nd, struct nfs_fh 
 		}
 		
 		if(d_is_symlink(dentry)){
-			res = ERR_PTR(10);
+			res = ERR_PTR(10); //10???
 			break;
 		}
 	}
@@ -1714,6 +1715,7 @@ static int nfs4_lookup_revalidate(struct dentry *dentry, unsigned int flags)
 {
 	struct inode *inode = dentry->d_inode;
 	int ret = 0;
+
 	
 	/* We can't create new files in nfs_open_revalidate(), so we
 	 * optimize away revalidation of negative dentries.
@@ -1741,6 +1743,7 @@ static int nfs4_lookup_revalidate(struct dentry *dentry, unsigned int flags)
 			return -ECHILD;
 		return ret;
 	}
+
 
 	if(nfs_need_revalidate_inode(inode))
 		return 0;

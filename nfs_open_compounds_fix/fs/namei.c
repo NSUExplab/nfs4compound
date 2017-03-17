@@ -1361,7 +1361,7 @@ static struct dentry *lookup_dcache(struct qstr *name, struct dentry *dir,
 	*need_lookup = false;
 	dentry = d_lookup(dir, name);
 	if (dentry) {
-		if (d_is_chain_temp(dentry)){
+		if (d_is_chain_temp(dentry)) {
 			*need_lookup = true;
 			return dentry;
 		}
@@ -1928,7 +1928,6 @@ static inline int walk_chain(struct nameidata *nd, struct path *path, int follow
 		}
 		if(should_follow_link(path->dentry, follow)){
 			mutex_unlock(&nd->chain_parent->d_inode->i_mutex);
-
 			return 1;
 		}
 
