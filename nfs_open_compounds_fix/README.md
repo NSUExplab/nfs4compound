@@ -3,7 +3,7 @@
 Patch for Linux VFS framework and NFSv4 client module. 
 
 With this patch NFS will send compound lookup requests, 
-significantly improving performance of open(2) and similas syscalls (stat(2), access(2)...).
+significantly improving performance of open(2) and similar syscalls (stat(2), access(2)...).
 
 This is very WIP.  We only know that this can handle some synthetic workloads without kernel panic (and we do not even know what happens on other types of workload).
 
