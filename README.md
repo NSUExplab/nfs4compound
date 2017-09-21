@@ -4,12 +4,14 @@ This repository contains 3 project.
 
 ### 1. TarFS
 
-It is just a study project. It is file system driver for mounting tar files as file system for reading.
+It is just a study project. It is file system driver for mounting tar files as read/only file system.
 
 ### 2. Test modules (rpc_exploits)
 
-It is kernel modules for checking possibility of making RPC compounds containing several lookup operations.
+Kernel modules for checking possibility of making RPC compounds containing several lookup operations.
 
 ### 3. Modified NFS (nfs_open_compound_fix)
 
-It is patch for NFS. With this patch NFS not sending request on each lookup during file search, but stores it in special list, creates a compound containing all lookups and sends it to server.
+Patch for Linux VFS framework and NFSv4 client module. With this patch NFS will send compound lookup requests, significantly improving performance of open(2) and similas syscalls (stat(2), access(2)...).
+Current version of the patch is written for stock CentOS 7 kernel.
+This is work in progress, do not try this in production environment!!!
