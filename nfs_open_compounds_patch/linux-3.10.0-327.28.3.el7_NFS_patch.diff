@@ -1,0 +1,1696 @@
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/fs/namei.c linux-3.10.0-327.28.3.el7_FOR_PATCH/fs/namei.c
+*** linux-3.10.0-327.28.3.el7_RAW/fs/namei.c	2016-08-12 22:33:30.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/fs/namei.c	2017-10-02 13:44:43.000000000 +0700
+***************
+*** 894,899 ****
+--- 894,900 ----
+  	audit_log_link_denied("linkat", link);
+  	return -EPERM;
+  }
++ static int chain_lookup(struct nameidata *nd, struct path *path);
+  
+  static __always_inline int
+  follow_link(struct path *link, struct nameidata *nd, void **p)
+***************
+*** 931,936 ****
+--- 932,941 ----
+  	s = nd_get_link(nd);
+  	if (s) {
+  		error = __vfs_follow_link(nd, s);
++ 		if(likely(nd->inode) && nd->inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
++ 			if(nd->chain_size)
++ 				chain_lookup(nd, link);
++ 		}
+  		if (unlikely(error))
+  			put_link(nd, link, *p);
+  	}
+***************
+*** 1356,1361 ****
+--- 1361,1371 ----
+  	*need_lookup = false;
+  	dentry = d_lookup(dir, name);
+  	if (dentry) {
++ 		if (d_is_chain_temp(dentry)){
++ 			*need_lookup = true;
++ 			return dentry;
++ 		}
++ 
+  		if (dentry->d_flags & DCACHE_OP_REVALIDATE) {
+  			error = d_revalidate(dentry, flags);
+  			if (unlikely(error <= 0)) {
+***************
+*** 1663,1668 ****
+--- 1673,1679 ----
+  		void *cookie;
+  
+  		res = follow_link(&link, nd, &cookie);
++ 		
+  		if (res)
+  			break;
+  		res = walk_component(nd, path, LOOKUP_FOLLOW);
+***************
+*** 1798,1803 ****
+--- 1809,1976 ----
+  
+  #endif
+  
++ static inline void dchain_list_pop(struct nameidata *nd){
++ 	struct chain_dentry *dchain_entry;	
++ 	struct list_head *pos = nd->dchain_list.prev;
++ 	dchain_entry = list_entry(pos, struct chain_dentry, list);
++ 	dput(dchain_entry->dentry);
++ 	list_del(pos);
++ 	kfree(dchain_entry);
++ 	nd->chain_size--;
++ }
++ 
++ static inline int walk_chain(struct nameidata *nd, struct path *path, int follow);
++ 
++ static inline int free_dchain_list(struct nameidata *nd){
++ 	int i = 0;
++ 	struct list_head *pos, *q;
++ 	struct chain_dentry *dchain_entry;
++ 	struct list_head *dchain_list = &nd->dchain_list;
++ 	struct dentry *dentry, *prev = NULL;
++ 
++ 	list_for_each_safe(pos, q, dchain_list){
++ 		dchain_entry = list_entry(pos, struct chain_dentry, list);
++ 		dentry = dchain_entry->dentry;
++ 
++ 
++ 		i++;
++ 		// if(i < nd->chain_size){
++ 		if (dentry != nd->path.dentry){
++ 			dput(dentry);
++ 		}
++ 
++ 		if(d_is_symlink(dentry)){
++ 			if(prev != NULL)
++ 				dput(nd->path.dentry);
++ 			nd->last = dchain_entry->name;
++ 		}
++ 		list_del(pos);
++ 		kfree(dchain_entry);
++ 		prev = dentry;
++ 	}
++ 	nd->chain_size = 0;
++ 
++ 	return 0;
++ }
++ 
++ static int chain_lookup(struct nameidata *nd, struct path *path){
++ 	int err = nd->inode->i_op->chain_lookup(nd);
++ 	if(err > 0){
++ 		path->dentry = nd->path.dentry;
++ 		path->mnt = nd->path.mnt;
++ 		nd->path.dentry = path->dentry->d_parent;
++ 		nd->inode = nd->path.dentry->d_inode;
++ 		dget(nd->path.dentry);
++ 	}
++ 	free_dchain_list(nd);
++ 
++ 	if (err < 0){
++ 		terminate_walk(nd);
++ 	}
++ 	mutex_unlock(&nd->chain_parent->d_inode->i_mutex);
++ 	return err;
++ }
++ 
++ static inline int walk_chain(struct nameidata *nd, struct path *path, int follow)
++ {
++ 
++ 	struct list_head *dchain_list = &nd->dchain_list;
++ 	struct dentry *dentry;
++ 	struct chain_dentry *new_chain;
++ 	
++ 	bool need_lookup;
++ 	int err = 0;
++ 
++ 	if(unlikely(nd->last_type != LAST_NORM)){
++ 		if(nd->chain_size > 0 && nd->last_type == LAST_DOTDOT){
++ 			dchain_list_pop(nd);
++ 			if(!nd->chain_size)
++ 				mutex_unlock(&nd->chain_parent->d_inode->i_mutex);
++ 			return 0;
++ 		}
++ 		else if(nd->chain_size > 0 && nd->last_type == LAST_DOT){
++ 			return 0;
++ 		}
++ 		else{
++ 			err = handle_dots(nd, nd->last_type);
++ 			return err;
++ 		}
++ 	}
++ 
++ 	/* all access rights will be permitted later
++ 	/  this version work without access rights
++ 	/  err = may_lookup(nd);
++ 		/  if (err)
++ 	/	break;	
++ 	*/
++ 
++ 	if(nd->chain_size)
++ 		dentry = list_entry(dchain_list->prev, struct chain_dentry, list)->dentry;
++ 	else {
++ 		nd->chain_parent = nd->path.dentry;
++ 		mutex_lock(&nd->chain_parent->d_inode->i_mutex);
++ 		dentry = nd->path.dentry;
++ 	}
++ 
++ 	dentry = lookup_dcache(&nd->last, dentry, nd->flags, &need_lookup);
++ 
++ 	if(IS_ERR(dentry)){
++ 		err = PTR_ERR(dentry);
++ 		goto out_err;
++ 	}
++ 
++ 	path->dentry = dentry;
++ 	path->mnt = nd->path.mnt;
++ 	
++ 	if(!need_lookup) {
++ 		if(d_mountpoint(path->dentry)) {
++ 			follow_mount(path);
++ 		}
++ 		if(should_follow_link(path->dentry, follow)){
++ 			mutex_unlock(&nd->chain_parent->d_inode->i_mutex);
++ 
++ 			return 1;
++ 		}
++ 
++ 		path_to_nameidata(path, nd);
++ 		nd->inode = dentry->d_inode;
++ 
++ 		//if(nd->chain_size)
++ 			free_dchain_list(nd);
++ 
++ 		mutex_unlock(&nd->chain_parent->d_inode->i_mutex);
++ 		if(unlikely(!dentry->d_inode)) {//maybe d_is_negative(dentry)???
++ 			terminate_walk(nd);
++ 			return -ENOENT;
++ 		}
++ 	} else {
++ 		new_chain = kmalloc(sizeof(struct chain_dentry), GFP_KERNEL);
++ 
++ 		if(!new_chain) {
++ 			err = -ENOMEM;
++ 			goto out_err;
++ 		}
++ 		d_set_type(dentry, DCACHE_CHAIN_TEMP);
++ 
++ 		new_chain->name = nd->last;
++ 		new_chain->dentry = dentry;
++ 		list_add_tail(&new_chain->list, dchain_list);
++ 		nd->chain_size++;
++ 
++ 		if(nd->chain_size >= 30)
++ 			return chain_lookup(nd, path);
++ 	}
++ 
++ 	return err;
++ 
++ out_err:
++ 	terminate_walk(nd);
++ 	free_dchain_list(nd);
++ 
++ 	mutex_unlock(&nd->chain_parent->d_inode->i_mutex);
++ 	return err;
++ }
++ 
+  /*
+   * Name resolution.
+   * This is the basic name resolution function, turning a pathname into
+***************
+*** 1821,1831 ****
+  		struct qstr this;
+  		long len;
+  		int type;
+! 
+! 		err = may_lookup(nd);
+!  		if (err)
+! 			break;
+! 
+  		len = hash_name(name, &this.hash);
+  		this.name = name;
+  		this.len = len;
+--- 1994,2004 ----
+  		struct qstr this;
+  		long len;
+  		int type;
+! 		
+! 		//err = may_lookup(nd);
+!  		//if (err)
+! 		//	break;
+! 	
+  		len = hash_name(name, &this.hash);
+  		this.name = name;
+  		this.len = len;
+***************
+*** 1853,1863 ****
+  
+  		nd->last = this;
+  		nd->last_type = type;
+! 
+  		if (!name[len])
+  			return 0;
+! 		/*
+! 		 * If it wasn't NUL, we know it was '/'. Skip that
+  		 * slash, and continue until no more slashes.
+  		 */
+  		do {
+--- 2026,2035 ----
+  
+  		nd->last = this;
+  		nd->last_type = type;
+! 		
+  		if (!name[len])
+  			return 0;
+! 		/*dcurrentf it wasn't NUL, we know it was '/'. Skip that
+  		 * slash, and continue until no more slashes.
+  		 */
+  		do {
+***************
+*** 1865,1874 ****
+  		} while (unlikely(name[len] == '/'));
+  		if (!name[len])
+  			return 0;
+! 
+  		name += len;
+  
+- 		err = walk_component(nd, &next, LOOKUP_FOLLOW);
+  		if (err < 0)
+  			return err;
+  
+--- 2037,2052 ----
+  		} while (unlikely(name[len] == '/'));
+  		if (!name[len])
+  			return 0;
+! 		
+  		name += len;
++ 		
++ 		if(likely(nd->inode) && nd->inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
++ 			err = walk_chain(nd, &next, LOOKUP_FOLLOW);
++ 		}
++ 		else{
++ 			err = walk_component(nd, &next, LOOKUP_FOLLOW);
++ 		}
+  
+  		if (err < 0)
+  			return err;
+  
+***************
+*** 1894,1899 ****
+--- 2072,2080 ----
+  	nd->last_type = LAST_ROOT; /* if there are only slashes... */
+  	nd->flags = flags | LOOKUP_JUMPED;
+  	nd->depth = 0;
++ 	nd->chain_size = 0;
++ 	INIT_LIST_HEAD(&nd->dchain_list);
++ 
+  	if (flags & LOOKUP_ROOT) {
+  		struct dentry *root = nd->root.dentry;
+  		struct inode *inode = root->d_inode;
+***************
+*** 1976,1985 ****
+--- 2157,2179 ----
+  
+  static inline int lookup_last(struct nameidata *nd, struct path *path)
+  {
++ 	int err = 0;
+  	if (nd->last_type == LAST_NORM && nd->last.name[nd->last.len])
+  		nd->flags |= LOOKUP_FOLLOW | LOOKUP_DIRECTORY;
+  
+  	nd->flags &= ~LOOKUP_PARENT;
++ 
++ 	if (nd->path.dentry->d_inode && nd->path.dentry->d_inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
++ 		err = walk_chain(nd, path, nd->flags & LOOKUP_FOLLOW);
++ 		if (err)
++ 			return err;
++ 		
++ 		if (!nd->chain_size)
++ 			return err;
++ 
++ 		err = chain_lookup(nd, path);
++ 		return err;
++ 	}
+  	return walk_component(nd, path, nd->flags & LOOKUP_FOLLOW);
+  }
+  
+***************
+*** 2011,2020 ****
+--- 2205,2219 ----
+  		return err;
+  
+  	current->total_link_count = 0;
++ relookup:
+  	err = link_path_walk(name, nd);
+  
+  	if (!err && !(flags & LOOKUP_PARENT)) {
+  		err = lookup_last(nd, &path);
++ 		if(err == 10){ 
++ 			name = nd->last.name;
++ 			goto relookup;
++ 		}
+  		while (err > 0) {
+  			void *cookie;
+  			struct path link = path;
+***************
+*** 2053,2061 ****
+  static int filename_lookup(int dfd, struct filename *name,
+  				unsigned int flags, struct nameidata *nd)
+  {
+! 	int retval = path_lookupat(dfd, name->name, flags | LOOKUP_RCU, nd);
+! 	if (unlikely(retval == -ECHILD))
+! 		retval = path_lookupat(dfd, name->name, flags, nd);
+  	if (unlikely(retval == -ESTALE))
+  		retval = path_lookupat(dfd, name->name,
+  						flags | LOOKUP_REVAL, nd);
+--- 2252,2260 ----
+  static int filename_lookup(int dfd, struct filename *name,
+  				unsigned int flags, struct nameidata *nd)
+  {
+! 	//int retval = path_lookupat(dfd, name->name, flags | LOOKUP_RCU, nd);
+! 	//if (unlikely(retval == -ECHILD))
+! 		int retval = path_lookupat(dfd, name->name, flags, nd);
+  	if (unlikely(retval == -ESTALE))
+  		retval = path_lookupat(dfd, name->name,
+  						flags | LOOKUP_REVAL, nd);
+***************
+*** 2408,2415 ****
+  	int error;
+  	if (IS_ERR(s))
+  		return PTR_ERR(s);
+! 	error = path_mountpoint(dfd, s->name, path, flags | LOOKUP_RCU);
+! 	if (unlikely(error == -ECHILD))
+  		error = path_mountpoint(dfd, s->name, path, flags);
+  	if (unlikely(error == -ESTALE))
+  		error = path_mountpoint(dfd, s->name, path, flags | LOOKUP_REVAL);
+--- 2607,2614 ----
+  	int error;
+  	if (IS_ERR(s))
+  		return PTR_ERR(s);
+! 	//error = path_mountpoint(dfd, s->name, path, flags | LOOKUP_RCU);
+! 	//if (unlikely(error == -ECHILD))
+  		error = path_mountpoint(dfd, s->name, path, flags);
+  	if (unlikely(error == -ESTALE))
+  		error = path_mountpoint(dfd, s->name, path, flags | LOOKUP_REVAL);
+***************
+*** 2775,2780 ****
+--- 2974,2983 ----
+  
+  	file->f_path.dentry = DENTRY_NOT_SET;
+  	file->f_path.mnt = nd->path.mnt;
++ //	if(dir->i_op->chain_lookup_open)
++ //		error = dir->i_op->chain_lookup_open(nd, dentry, file, open_flag,
++ //					  mode, opened);
++ //	else
+  	error = dir->i_op->atomic_open(dir, dentry, file, open_flag, mode,
+  				      opened);
+  	if (error < 0) {
+***************
+*** 2948,2954 ****
+  		   struct file *file, const struct open_flags *op,
+  		   int *opened, struct filename *name)
+  {
+! 	struct dentry *dir = nd->path.dentry;
+  	int open_flag = op->open_flag;
+  	bool will_truncate = (open_flag & O_TRUNC) != 0;
+  	bool got_write = false;
+--- 3151,3157 ----
+  		   struct file *file, const struct open_flags *op,
+  		   int *opened, struct filename *name)
+  {
+! 	struct dentry *dir;
+  	int open_flag = op->open_flag;
+  	bool will_truncate = (open_flag & O_TRUNC) != 0;
+  	bool got_write = false;
+***************
+*** 2957,2964 ****
+  	bool symlink_ok = false;
+  	struct path save_parent = { .dentry = NULL, .mnt = NULL };
+  	bool retried = false;
+! 	int error;
+  
+  	nd->flags &= ~LOOKUP_PARENT;
+  	nd->flags |= op->intent;
+  
+--- 3160,3175 ----
+  	bool symlink_ok = false;
+  	struct path save_parent = { .dentry = NULL, .mnt = NULL };
+  	bool retried = false;
+! 	int error = 0;
+  
++ 	if(nd->path.dentry->d_inode && nd->path.dentry->d_inode->i_op->chain_lookup && !(nd->flags & LOOKUP_AUTOMOUNT)){
++ 		if(nd->chain_size)
++ 			error = chain_lookup(nd, path);
++ 		if (unlikely(error)){
++ 			return error;
++ 		}
++ 	}
++ 	dir = nd->path.dentry;
+  	nd->flags &= ~LOOKUP_PARENT;
+  	nd->flags |= op->intent;
+  
+***************
+*** 2993,2998 ****
+--- 3204,3210 ----
+  		if (open_flag & O_PATH && !(nd->flags & LOOKUP_FOLLOW))
+  			symlink_ok = true;
+  		/* we _can_ be in RCU mode here */
++ 		
+  		error = lookup_fast(nd, path, &inode);
+  		if (likely(!error))
+  			goto finish_lookup;
+***************
+*** 3215,3225 ****
+  		goto out;
+  
+  	current->total_link_count = 0;
+  	error = link_path_walk(pathname->name, nd);
+  	if (unlikely(error))
+  		goto out;
+- 
+  	error = do_last(nd, &path, file, op, &opened, pathname);
+  	while (unlikely(error > 0)) { /* trailing symlink */
+  		struct path link = path;
+  		void *cookie;
+--- 3427,3441 ----
+  		goto out;
+  
+  	current->total_link_count = 0;
++ relookup:
+  	error = link_path_walk(pathname->name, nd);
+  	if (unlikely(error))
+  		goto out;
+  	error = do_last(nd, &path, file, op, &opened, pathname);
++ 	if(error == 10){ 
++ 		pathname->name = nd->last.name;
++ 		goto relookup;
++ 	}
+  	while (unlikely(error > 0)) { /* trailing symlink */
+  		struct path link = path;
+  		void *cookie;
+***************
+*** 3230,3242 ****
+  			break;
+  		}
+  		error = may_follow_link(&link, nd);
+! 		if (unlikely(error))
+  			break;
+  		nd->flags |= LOOKUP_PARENT;
+  		nd->flags &= ~(LOOKUP_OPEN|LOOKUP_CREATE|LOOKUP_EXCL);
+  		error = follow_link(&link, nd, &cookie);
+! 		if (unlikely(error))
+  			break;
+  		error = do_last(nd, &path, file, op, &opened, pathname);
+  		put_link(nd, &link, cookie);
+  	}
+--- 3446,3460 ----
+  			break;
+  		}
+  		error = may_follow_link(&link, nd);
+! 		if (unlikely(error)){
+  			break;
++ 		}
+  		nd->flags |= LOOKUP_PARENT;
+  		nd->flags &= ~(LOOKUP_OPEN|LOOKUP_CREATE|LOOKUP_EXCL);
+  		error = follow_link(&link, nd, &cookie);
+! 		if (unlikely(error)){
+  			break;
++ 		}
+  		error = do_last(nd, &path, file, op, &opened, pathname);
+  		put_link(nd, &link, cookie);
+  	}
+***************
+*** 3267,3274 ****
+  	struct nameidata nd;
+  	struct file *filp;
+  
+! 	filp = path_openat(dfd, pathname, &nd, op, flags | LOOKUP_RCU);
+! 	if (unlikely(filp == ERR_PTR(-ECHILD)))
+  		filp = path_openat(dfd, pathname, &nd, op, flags);
+  	if (unlikely(filp == ERR_PTR(-ESTALE)))
+  		filp = path_openat(dfd, pathname, &nd, op, flags | LOOKUP_REVAL);
+--- 3485,3492 ----
+  	struct nameidata nd;
+  	struct file *filp;
+  
+! 	//filp = path_openat(dfd, pathname, &nd, op, flags | LOOKUP_RCU);
+! 	//if (unlikely(filp == ERR_PTR(-ECHILD)))
+  		filp = path_openat(dfd, pathname, &nd, op, flags);
+  	if (unlikely(filp == ERR_PTR(-ESTALE)))
+  		filp = path_openat(dfd, pathname, &nd, op, flags | LOOKUP_REVAL);
+***************
+*** 3294,3301 ****
+  	if (unlikely(IS_ERR(filename)))
+  		return ERR_CAST(filename);
+  
+! 	file = path_openat(-1, filename, &nd, op, flags | LOOKUP_RCU);
+! 	if (unlikely(file == ERR_PTR(-ECHILD)))
+  		file = path_openat(-1, filename, &nd, op, flags);
+  	if (unlikely(file == ERR_PTR(-ESTALE)))
+  		file = path_openat(-1, filename, &nd, op, flags | LOOKUP_REVAL);
+--- 3512,3519 ----
+  	if (unlikely(IS_ERR(filename)))
+  		return ERR_CAST(filename);
+  
+! 	//file = path_openat(-1, filename, &nd, op, flags | LOOKUP_RCU);
+! 	//if (unlikely(file == ERR_PTR(-ECHILD)))
+  		file = path_openat(-1, filename, &nd, op, flags);
+  	if (unlikely(file == ERR_PTR(-ESTALE)))
+  		file = path_openat(-1, filename, &nd, op, flags | LOOKUP_REVAL);
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/fs/nfs/dir.c linux-3.10.0-327.28.3.el7_FOR_PATCH/fs/nfs/dir.c
+*** linux-3.10.0-327.28.3.el7_RAW/fs/nfs/dir.c	2016-08-12 22:33:30.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/fs/nfs/dir.c	2017-10-02 12:59:40.233012613 +0700
+***************
+*** 1427,1432 ****
+--- 1427,1567 ----
+  }
+  EXPORT_SYMBOL_GPL(nfs_lookup);
+  
++ static int nfs_allocate_handles(struct nfs_fh ***fhandles, struct nfs_fattr ***fattrs, struct nfs4_label ***labels, struct inode *dir, int size){
++ 	int i = 0;
++ 	*fhandles = kmalloc(sizeof(struct nfs_fh*) * size, GFP_KERNEL);
++ 	*fattrs = kmalloc(sizeof(struct nfs_fattr*) * size, GFP_KERNEL);
++ 	*labels = kmalloc(sizeof(struct nfs4_label*) * size, GFP_KERNEL);
++ 
++ 	if(!*fattrs || !*fhandles || !*labels)
++ 		return -ENOMEM;
++ 
++ 	for(i = 0; i < size; i++){
++ 		(*fhandles)[i] = nfs_alloc_fhandle();
++ 		(*fattrs)[i] = nfs_alloc_fattr();
++ 		(*labels)[i] = nfs4_label_alloc(NFS_SERVER(dir), GFP_NOWAIT);
++ 		if (!(*fhandles)[i] || !(*fattrs)[i])
++ 			return -ENOMEM;
++ 	}
++ 	return 0;
++ }
++ 
++ static struct dentry * nfs_fill_dchain_list(struct nameidata *nd, struct nfs_fh **fhandles, 
++ 				struct nfs_fattr **fattrs, struct nfs4_label **labels, struct dentry *parent){
++ 	int i = 0;
++ 	struct list_head *cur_pos;
++ 	struct inode *inode = NULL;
++ 	struct dentry *dentry = NULL;
++ 	struct chain_dentry *dchain_entry;
++ 	struct dentry *res = NULL;
++ 	struct list_head *dchain_list = &nd->dchain_list;
++ 
++ 	list_for_each(cur_pos, dchain_list){
++ 		inode = NULL;
++ 		dchain_entry = list_entry(cur_pos, struct chain_dentry, list);
++ 		dentry = dchain_entry->dentry;
++ 
++ 		inode = nfs_fhget(parent->d_sb, fhandles[i], fattrs[i], labels[i]);
++ 		i++;
++ 
++ 		res = ERR_CAST(inode);
++ 
++ 		if (IS_ERR(res)){
++ 			res = d_materialise_unique(dentry, NULL);
++ 		}
++ 		else{
++ 			res = d_materialise_unique(dentry, inode);
++ 		}
++ 
++ 		if (res != NULL) {
++ 			if (IS_ERR(res)){
++ 				return res;
++ 			}
++ 			dchain_entry->dentry = res;
++ 		}
++ 		
++ 		if(d_is_symlink(dentry)){
++ 			res = ERR_PTR(10);
++ 			break;
++ 		}
++ 	}
++ 
++ 	nd->path.dentry = dentry;
++ 	if(!IS_ERR(ERR_CAST(inode)))
++ 		nd->inode = inode;
++ 	else
++ 		nd->inode = NULL;
++ 
++ 	return res;
++ }
++ 
++ static int nfs_free_handles(struct nfs_fh **fhandles, struct nfs_fattr **fattrs, struct nfs4_label **labels, int size) {
++ 	int i = 0;
++ 
++ 	for(i = 0; i < size; i++){
++ 		nfs_free_fhandle(fhandles[i]);
++ 		nfs_free_fattr(fattrs[i]);
++ 		nfs4_label_free(labels[i]);
++ 	}
++ 
++ 	kfree(fhandles);
++ 	kfree(fattrs);
++ 	kfree(labels);
++ 	return 0;
++ }
++ 
++ int nfs_chain_lookup_open(struct nameidata *nd, struct dentry *dentry,
++ 			   struct file * file, unsigned open_flag,
++ 			   umode_t create_mode, int *opened) {
++ 	int error = 0;
++ 
++ 	error = NFS_PROTO(nd->inode)->chain_lookup_open(NULL, NULL, NULL, NULL, NULL, 0);
++ 	return error;
++ }	
++ EXPORT_SYMBOL_GPL(nfs_chain_lookup_open);
++ 
++ int nfs_chain_lookup(struct nameidata *nd) {
++ 
++ 	int error = 0;
++ 	struct nfs_fh **fhandles = NULL;
++ 	struct nfs_fattr **fattrs = NULL;
++ 	struct nfs4_label **labels = NULL;
++ 	struct dentry *parent = nd->path.dentry;
++ 	struct dentry *res;
++ 	struct inode* dir;
++ 	struct list_head *dchain_list = &nd->dchain_list;
++ 
++ 
++ 	dir = parent->d_inode;
++ 	
++ 	error = nfs_allocate_handles(&fhandles, &fattrs, &labels, dir, nd->chain_size);
++ 	
++ 	if(error < 0)
++ 		goto out;
++ 
++ 	nfs_block_sillyrename(parent);
++ 	
++ 	error = NFS_PROTO(dir)->chain_lookup(dir, dchain_list, fhandles, fattrs, labels, nd->chain_size);
++ 	if (error < 0 && error != -ENOENT && error != -EACCES && error != -40)
++ 		goto out_unblock_sillyrename;
++ 	
++ 	res = nfs_fill_dchain_list(nd, fhandles, fattrs, labels, parent);
++ 
++ 	if(PTR_ERR(res) == 10){
++ 		error = 10;
++ 	}
++ out_unblock_sillyrename:
++ 	nfs_unblock_sillyrename(parent);
++ out:
++ //	mutex_unlock(&parent->d_inode->i_mutex);
++ 
++ 	dput(parent);
++ 	nfs_free_handles(fhandles, fattrs, labels, nd->chain_size);
++ 	
++ 	return error;
++ }
++ EXPORT_SYMBOL_GPL(nfs_chain_lookup);
++ 
+  #if IS_ENABLED(CONFIG_NFS_V4)
+  static int nfs4_lookup_revalidate(struct dentry *, unsigned int);
+  
+***************
+*** 1577,1601 ****
+  
+  static int nfs4_lookup_revalidate(struct dentry *dentry, unsigned int flags)
+  {
+! 	struct inode *inode;
+  	int ret = 0;
+! 
+! 	if (!(flags & LOOKUP_OPEN) || (flags & LOOKUP_DIRECTORY))
+! 		goto no_open;
+! 	if (d_mountpoint(dentry))
+! 		goto no_open;
+! 	if (NFS_SB(dentry->d_sb)->caps & NFS_CAP_ATOMIC_OPEN_V1)
+! 		goto no_open;
+! 
+! 	inode = dentry->d_inode;
+! 
+  	/* We can't create new files in nfs_open_revalidate(), so we
+  	 * optimize away revalidation of negative dentries.
+  	 */
+  	if (inode == NULL) {
+  		struct dentry *parent;
+  		struct inode *dir;
+! 
+  		if (flags & LOOKUP_RCU) {
+  			parent = ACCESS_ONCE(dentry->d_parent);
+  			dir = ACCESS_ONCE(parent->d_inode);
+--- 1712,1727 ----
+  
+  static int nfs4_lookup_revalidate(struct dentry *dentry, unsigned int flags)
+  {
+! 	struct inode *inode = dentry->d_inode;
+  	int ret = 0;
+! 	
+  	/* We can't create new files in nfs_open_revalidate(), so we
+  	 * optimize away revalidation of negative dentries.
+  	 */
+  	if (inode == NULL) {
+  		struct dentry *parent;
+  		struct inode *dir;
+! 	
+  		if (flags & LOOKUP_RCU) {
+  			parent = ACCESS_ONCE(dentry->d_parent);
+  			dir = ACCESS_ONCE(parent->d_inode);
+***************
+*** 1613,1636 ****
+  			dput(parent);
+  		else if (parent != ACCESS_ONCE(dentry->d_parent))
+  			return -ECHILD;
+! 		goto out;
+  	}
+  
+! 	/* NFS only supports OPEN on regular files */
+! 	if (!S_ISREG(inode->i_mode))
+! 		goto no_open;
+! 	/* We cannot do exclusive creation on a positive dentry */
+! 	if (flags & LOOKUP_EXCL)
+! 		goto no_open;
+! 
+! 	/* Let f_op->open() actually open (and revalidate) the file */
+! 	ret = 1;
+! 
+! out:
+! 	return ret;
+! 
+! no_open:
+! 	return nfs_lookup_revalidate(dentry, flags);
+  }
+  
+  #endif /* CONFIG_NFSV4 */
+--- 1739,1750 ----
+  			dput(parent);
+  		else if (parent != ACCESS_ONCE(dentry->d_parent))
+  			return -ECHILD;
+! 		return ret;
+  	}
+  
+! 	if(nfs_need_revalidate_inode(inode))
+! 		return 0;
+! 	return 1;
+  }
+  
+  #endif /* CONFIG_NFSV4 */
+***************
+*** 2403,2408 ****
+--- 2517,2523 ----
+  
+  int nfs_may_open(struct inode *inode, struct rpc_cred *cred, int openflags)
+  {
++ 	return 0;
+  	return nfs_do_access(inode, cred, nfs_open_permission_mask(openflags));
+  }
+  EXPORT_SYMBOL_GPL(nfs_may_open);
+***************
+*** 2411,2416 ****
+--- 2526,2532 ----
+  {
+  	struct rpc_cred *cred;
+  	int res = 0;
++ 		return res; //-------------------------------------------
+  
+  	nfs_inc_stats(inode, NFSIOS_VFSACCESS);
+  
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/fs/nfs/inode.c linux-3.10.0-327.28.3.el7_FOR_PATCH/fs/nfs/inode.c
+*** linux-3.10.0-327.28.3.el7_RAW/fs/nfs/inode.c	2016-08-12 22:33:30.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/fs/nfs/inode.c	2017-10-02 12:59:40.543013483 +0700
+***************
+*** 613,619 ****
+  	dput(parent);
+  }
+  
+! static bool nfs_need_revalidate_inode(struct inode *inode)
+  {
+  	if (NFS_I(inode)->cache_validity &
+  			(NFS_INO_INVALID_ATTR|NFS_INO_INVALID_LABEL))
+--- 613,619 ----
+  	dput(parent);
+  }
+  
+! bool nfs_need_revalidate_inode(struct inode *inode)
+  {
+  	if (NFS_I(inode)->cache_validity &
+  			(NFS_INO_INVALID_ATTR|NFS_INO_INVALID_LABEL))
+***************
+*** 656,662 ****
+  
+  		if (server->caps & NFS_CAP_READDIRPLUS)
+  			nfs_request_parent_use_readdirplus(dentry);
+! 		err = __nfs_revalidate_inode(server, inode);
+  	}
+  	if (!err) {
+  		generic_fillattr(inode, stat);
+--- 656,663 ----
+  
+  		if (server->caps & NFS_CAP_READDIRPLUS)
+  			nfs_request_parent_use_readdirplus(dentry);
+! 		err = 0;
+! 		//err = __nfs_revalidate_inode(server, inode);
+  	}
+  	if (!err) {
+  		generic_fillattr(inode, stat);
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/fs/nfs/internal.h linux-3.10.0-327.28.3.el7_FOR_PATCH/fs/nfs/internal.h
+*** linux-3.10.0-327.28.3.el7_RAW/fs/nfs/internal.h	2016-08-12 22:33:30.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/fs/nfs/internal.h	2017-10-02 12:59:40.550013502 +0700
+***************
+*** 329,334 ****
+--- 329,338 ----
+  					struct shrink_control *sc);
+  extern void nfs_force_use_readdirplus(struct inode *dir);
+  struct dentry *nfs_lookup(struct inode *, struct dentry *, unsigned int);
++ int nfs_chain_lookup(struct nameidata *);
++ int nfs_chain_lookup_open(struct nameidata *, struct dentry *,
++ 			   struct file *, unsigned,
++ 			   umode_t, int *);
+  int nfs_create(struct inode *, struct dentry *, umode_t, bool);
+  int nfs_mkdir(struct inode *, struct dentry *, umode_t);
+  int nfs_rmdir(struct inode *, struct dentry *);
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/fs/nfs/nfs4proc.c linux-3.10.0-327.28.3.el7_FOR_PATCH/fs/nfs/nfs4proc.c
+*** linux-3.10.0-327.28.3.el7_RAW/fs/nfs/nfs4proc.c	2016-08-12 22:33:30.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/fs/nfs/nfs4proc.c	2017-10-02 12:59:40.587013606 +0700
+***************
+*** 3187,3193 ****
+  		.rpc_argp = &args,
+  		.rpc_resp = &res,
+  	};
+- 
+  	args.bitmask = nfs4_bitmask(server, label);
+  
+  	nfs_fattr_init(fattr);
+--- 3187,3192 ----
+***************
+*** 3371,3376 ****
+--- 3370,3463 ----
+  	return status;
+  }
+  
++ static int nfs4_proc_chain_lookup(struct inode *dir, struct list_head *dchain_list,
++ 			    struct nfs_fh ** fhandles, struct nfs_fattr **fattrs,
++ 			    struct nfs4_label **labels, int size){	
++ 	int status, i, arglen, replen;
++ 	struct rpc_clnt *client = NFS_CLIENT(dir);
++ 	struct nfs_server *server = NFS_SERVER(dir);
++ 	struct rpc_procinfo * rpc_proc = &nfs4_procedures[NFSPROC4_CLNT_CHAIN_LOOKUP];
++ 	
++ 	struct nfs4_chain_lookup_arg args = {
++ 		.bitmask = server->attr_bitmask,
++ 		.dir_fh = NFS_FH(dir),
++ 		.dchain_list = dchain_list
++ 	};
++ 	struct nfs4_chain_lookup_res res = {
++ 		.server = server,
++ 		.fattrs = fattrs,
++ 		.size = size,
++ 		.labels = labels,
++ 		.fhandles = fhandles	
++ 	};
++ 
++ 	struct rpc_message msg = {
++ 		.rpc_proc = rpc_proc,
++ 		.rpc_argp = &args,
++ 		.rpc_resp = &res,
++ 	};
++ 	arglen = rpc_proc->p_arglen;
++ 	replen = rpc_proc->p_replen;
++ 	
++ 	rpc_proc->p_arglen = arglen * size;
++ 	rpc_proc->p_replen = replen * size;
++ 	dprintk(KERN_ALERT "p_arglen %d", rpc_proc->p_arglen);
++ 	args.bitmask = nfs4_bitmask(server, NULL);
++ 	
++ 	for(i = 0; i < size; ++i)
++ 		nfs_fattr_init(fattrs[i]);
++ 
++ 	status = nfs4_call_sync(client, server, &msg, &args.seq_args, &res.seq_res, 0);
++ 	
++ 	rpc_proc->p_arglen = arglen;
++ 	rpc_proc->p_replen = replen;
++ 	return status;
++ 
++ }
++ static int nfs4_proc_chain_lookup_open(struct inode *dir, struct list_head *dchain_list,
++ 			    struct nfs_fh ** fhandles, struct nfs_fattr **fattrs,
++ 			    struct nfs4_label **labels, int size){	
++ 	int status, i, arglen, replen;
++ 	struct rpc_clnt *client = NFS_CLIENT(dir);
++ 	struct nfs_server *server = NFS_SERVER(dir);
++ 	struct rpc_procinfo * rpc_proc = &nfs4_procedures[NFSPROC4_CLNT_CHAIN_LOOKUP_OPEN];
++ 	
++ 	struct nfs4_chain_lookup_open_arg args = {
++ 		.bitmask = server->attr_bitmask,
++ 		.dir_fh = NFS_FH(dir),
++ 		.dchain_list = dchain_list
++ 	};
++ 	struct nfs4_chain_lookup_open_res res = {
++ 		.server = server,
++ 		.fattrs = fattrs,
++ 		.size = size,
++ 		.labels = labels,
++ 		.fhandles = fhandles	
++ 	};
++ 
++ 	struct rpc_message msg = {
++ 		.rpc_proc = rpc_proc,
++ 		.rpc_argp = &args,
++ 		.rpc_resp = &res,
++ 	};
++ 	arglen = rpc_proc->p_arglen;
++ 	replen = rpc_proc->p_replen;
++ 	
++ 	rpc_proc->p_arglen = arglen * size * 2;
++ 	rpc_proc->p_replen = replen * size * 2;
++ 	
++ 	args.bitmask = nfs4_bitmask(server, labels[size - 1]);
++ 
++ 	for(i = 0; i < size; ++i)
++ 		nfs_fattr_init(fattrs[i]);
++ 
++ 	status = nfs4_call_sync(client, server, &msg, &args.seq_args, &res.seq_res, 0);
++ 	
++ 	rpc_proc->p_arglen = arglen;
++ 	rpc_proc->p_replen = replen;
++ 	return status;
++ 
++ }
+  struct rpc_clnt *
+  nfs4_proc_lookup_mountpoint(struct inode *dir, struct qstr *name,
+  			    struct nfs_fh *fhandle, struct nfs_fattr *fattr)
+***************
+*** 3402,3408 ****
+  	};
+  	int mode = entry->mask;
+  	int status = 0;
+- 
+  	/*
+  	 * Determine which access bits we want to ask for...
+  	 */
+--- 3489,3494 ----
+***************
+*** 8490,8495 ****
+--- 8576,8583 ----
+  static const struct inode_operations nfs4_dir_inode_operations = {
+  	.create		= nfs_create,
+  	.lookup		= nfs_lookup,
++ 	.chain_lookup = nfs_chain_lookup,
++ 	.chain_lookup_open = nfs_chain_lookup_open,
+  	.atomic_open	= nfs_atomic_open,
+  	.link		= nfs_link,
+  	.unlink		= nfs_unlink,
+***************
+*** 8529,8534 ****
+--- 8617,8624 ----
+  	.getattr	= nfs4_proc_getattr,
+  	.setattr	= nfs4_proc_setattr,
+  	.lookup		= nfs4_proc_lookup,
++ 	.chain_lookup = nfs4_proc_chain_lookup,
++ 	.chain_lookup_open = nfs4_proc_chain_lookup_open,
+  	.access		= nfs4_proc_access,
+  	.readlink	= nfs4_proc_readlink,
+  	.create		= nfs4_proc_create,
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/fs/nfs/nfs4state.c linux-3.10.0-327.28.3.el7_FOR_PATCH/fs/nfs/nfs4state.c
+*** linux-3.10.0-327.28.3.el7_RAW/fs/nfs/nfs4state.c	2016-08-12 22:33:30.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/fs/nfs/nfs4state.c	2017-10-02 12:59:40.593013623 +0700
+***************
+*** 768,774 ****
+  		nfs4_put_open_state(state);
+  		nfs4_put_state_owner(owner);
+  	} else
+! 		nfs4_do_close(state, gfp_mask, wait);
+  }
+  
+  void nfs4_close_state(struct nfs4_state *state, fmode_t fmode)
+--- 768,778 ----
+  		nfs4_put_open_state(state);
+  		nfs4_put_state_owner(owner);
+  	} else
+! 		/* we don't handle return code,
+! 		 * so, there's no reason to wait
+! 		 * for response 
+! 		 */
+! 		nfs4_do_close(state, gfp_mask, 0);
+  }
+  
+  void nfs4_close_state(struct nfs4_state *state, fmode_t fmode)
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/fs/nfs/nfs4xdr.c linux-3.10.0-327.28.3.el7_FOR_PATCH/fs/nfs/nfs4xdr.c
+*** linux-3.10.0-327.28.3.el7_RAW/fs/nfs/nfs4xdr.c	2016-08-12 22:33:30.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/fs/nfs/nfs4xdr.c	2017-10-02 12:59:40.608013666 +0700
+***************
+*** 606,611 ****
+--- 606,635 ----
+  				decode_lookup_maxsz + \
+  				decode_getattr_maxsz + \
+  				decode_getfh_maxsz)
++ #define NFS4_enc_chain_lookup_sz	(compound_encode_hdr_maxsz + \
++ 				encode_sequence_maxsz + \
++ 				encode_putfh_maxsz + \
++ 				encode_lookup_maxsz + \
++ 				encode_getattr_maxsz + \
++ 				encode_getfh_maxsz)
++ #define NFS4_dec_chain_lookup_sz	(compound_decode_hdr_maxsz + \
++ 				decode_sequence_maxsz + \
++ 				decode_putfh_maxsz + \
++ 				decode_lookup_maxsz + \
++ 				decode_getattr_maxsz + \
++ 				decode_getfh_maxsz)
++ #define NFS4_enc_chain_lookup_open_sz	(compound_encode_hdr_maxsz + \
++ 				encode_sequence_maxsz + \
++ 				encode_putfh_maxsz + \
++ 				encode_lookup_maxsz + \
++ 				encode_getattr_maxsz + \
++ 				encode_getfh_maxsz)
++ #define NFS4_dec_chain_lookup_open_sz	(compound_decode_hdr_maxsz + \
++ 				decode_sequence_maxsz + \
++ 				decode_putfh_maxsz + \
++ 				decode_lookup_maxsz + \
++ 				decode_getattr_maxsz + \
++ 				decode_getfh_maxsz)
+  #define NFS4_enc_lookup_root_sz (compound_encode_hdr_maxsz + \
+  				encode_sequence_maxsz + \
+  				encode_putrootfh_maxsz + \
+***************
+*** 2094,2100 ****
+  	struct compound_hdr hdr = {
+  		.minorversion = nfs4_xdr_minorversion(&args->seq_args),
+  	};
+- 
+  	encode_compound_hdr(xdr, req, &hdr);
+  	encode_sequence(xdr, &args->seq_args, &hdr);
+  	encode_putfh(xdr, args->dir_fh, &hdr);
+--- 2118,2123 ----
+***************
+*** 2105,2110 ****
+--- 2128,2179 ----
+  }
+  
+  /*
++  * Encode CHAIN_LOOKUP request
++  */
++ static void nfs4_xdr_enc_chain_lookup(struct rpc_rqst *req, struct xdr_stream *xdr,
++ 				const struct nfs4_chain_lookup_arg *args)
++ {
++ 	struct compound_hdr hdr = {
++ 		.minorversion = nfs4_xdr_minorversion(&args->seq_args),
++ 	};
++ 	struct list_head* cur_pos;
++ 	struct chain_dentry* cur_dentry;
++ 	
++ 	encode_compound_hdr(xdr, req, &hdr);
++ 	encode_sequence(xdr, &args->seq_args, &hdr);
++ 	encode_putfh(xdr, args->dir_fh, &hdr);
++ 	list_for_each(cur_pos, args->dchain_list){
++ 		cur_dentry = list_entry(cur_pos, struct chain_dentry, list);
++ 		encode_lookup(xdr, &cur_dentry->dentry->d_name, &hdr);
++ 		encode_getfh(xdr, &hdr);
++ 		encode_getfattr(xdr, args->bitmask, &hdr);
++ 	}
++ 	encode_nops(&hdr);
++ }
++ /*
++  * Encode CHAIN_LOOKUP_OPEN request
++  */
++ static void nfs4_xdr_enc_chain_lookup_open(struct rpc_rqst *req, struct xdr_stream *xdr,
++ 				const struct nfs4_chain_lookup_open_arg *args)
++ {
++ 	struct compound_hdr hdr = {
++ 		.minorversion = nfs4_xdr_minorversion(&args->seq_args),
++ 	};
++ 	struct list_head* cur_pos;
++ 	struct chain_dentry* cur_dentry;
++ 	
++ 	encode_compound_hdr(xdr, req, &hdr);
++ 	encode_sequence(xdr, &args->seq_args, &hdr);
++ 	encode_putfh(xdr, args->dir_fh, &hdr);
++ 	list_for_each(cur_pos, args->dchain_list){
++ 		cur_dentry = list_entry(cur_pos, struct chain_dentry, list);
++ 		encode_lookup(xdr, &cur_dentry->dentry->d_name, &hdr);
++ 		encode_getfh(xdr, &hdr);
++ 		encode_getfattr(xdr, args->bitmask, &hdr);
++ 	}
++ 	encode_nops(&hdr);
++ }
++ /*
+   * Encode LOOKUP_ROOT request
+   */
+  static void nfs4_xdr_enc_lookup_root(struct rpc_rqst *req,
+***************
+*** 6038,6043 ****
+--- 6107,6173 ----
+  	return status;
+  }
+  
++ static int nfs4_xdr_dec_chain_lookup(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
++ 			       struct nfs4_chain_lookup_res *res)
++ {
++ 	struct compound_hdr hdr;
++ 	int status, i = 0;
++ 
++ 	status = decode_compound_hdr(xdr, &hdr);
++ 	if (status)
++ 		goto out;
++ 	status = decode_sequence(xdr, &res->seq_res, rqstp);
++ 	if (status)
++ 		goto out;
++ 	status = decode_putfh(xdr);
++ 	if (status)
++ 		goto out;
++ 	for(i = 0; i < res->size; i++){
++ 		status = decode_lookup(xdr);
++ 		if (status)
++ 			goto out;
++ 		status = decode_getfh(xdr, res->fhandles[i]);
++ 		if (status)
++ 			goto out;
++ 		status = decode_getfattr_label(xdr, res->fattrs[i], res->labels[i], res->server);
++ 		if (status)
++ 			goto out;
++ 	}
++ 	
++ out:
++ 	return status;
++ }
++ 
++ static int nfs4_xdr_dec_chain_lookup_open(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
++ 			       struct nfs4_chain_lookup_open_res *res)
++ {
++ 	struct compound_hdr hdr;
++ 	int status, i = 0;
++ 
++ 	status = decode_compound_hdr(xdr, &hdr);
++ 	if (status)
++ 		goto out;
++ 	status = decode_sequence(xdr, &res->seq_res, rqstp);
++ 	if (status)
++ 		goto out;
++ 	status = decode_putfh(xdr);
++ 	if (status)
++ 		goto out;
++ 	for(i = 0; i < res->size; i++){
++ 		status = decode_lookup(xdr);
++ 		if (status)
++ 			goto out;
++ 		status = decode_getfh(xdr, res->fhandles[i]);
++ 		if (status)
++ 			goto out;
++ 		status = decode_getfattr_label(xdr, res->fattrs[i], res->labels[i], res->server);
++ 		if (status)
++ 			goto out;
++ 	}
++ 	
++ out:
++ 	return status;
++ }
+  /*
+   * Decode LOOKUP_ROOT response
+   */
+***************
+*** 7365,7370 ****
+--- 7495,7502 ----
+  	PROC(GETATTR,		enc_getattr,		dec_getattr),
+  	PROC(LOOKUP,		enc_lookup,		dec_lookup),
+  	PROC(LOOKUP_ROOT,	enc_lookup_root,	dec_lookup_root),
++ 	PROC(CHAIN_LOOKUP,	enc_chain_lookup,	dec_chain_lookup),
++ 	PROC(CHAIN_LOOKUP_OPEN,	enc_chain_lookup_open,	dec_chain_lookup_open),
+  	PROC(REMOVE,		enc_remove,		dec_remove),
+  	PROC(RENAME,		enc_rename,		dec_rename),
+  	PROC(LINK,		enc_link,		dec_link),
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/fs/nfs/proc.c linux-3.10.0-327.28.3.el7_FOR_PATCH/fs/nfs/proc.c
+*** linux-3.10.0-327.28.3.el7_RAW/fs/nfs/proc.c	2016-08-12 22:33:30.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/fs/nfs/proc.c	2017-10-02 12:59:40.967014673 +0700
+***************
+*** 1,4 ****
+! /*
+   *  linux/fs/nfs/proc.c
+   *
+   *  Copyright (C) 1992, 1993, 1994  Rick Sladkey
+--- 1,4 ----
+! 	/*
+   *  linux/fs/nfs/proc.c
+   *
+   *  Copyright (C) 1992, 1993, 1994  Rick Sladkey
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/.gitattributes linux-3.10.0-327.28.3.el7_FOR_PATCH/.gitattributes
+*** linux-3.10.0-327.28.3.el7_RAW/.gitattributes	1970-01-01 07:00:00.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/.gitattributes	2017-10-02 12:53:29.711970929 +0700
+***************
+*** 0 ****
+--- 1,2 ----
++ /redhat		export-ignore
++ makefile	export-ignore
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/.gitignore linux-3.10.0-327.28.3.el7_FOR_PATCH/.gitignore
+*** linux-3.10.0-327.28.3.el7_RAW/.gitignore	1970-01-01 07:00:00.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/.gitignore	2017-10-02 12:53:29.722970961 +0700
+***************
+*** 0 ****
+--- 1,108 ----
++ #
++ # NOTE! Don't add files that are generated in specific
++ # subdirectories here. Add them in the ".gitignore" file
++ # in that subdirectory instead.
++ #
++ # NOTE! Please use 'git ls-files -i --exclude-standard'
++ # command after changing this file, to see if there are
++ # any tracked files which get ignored after the change.
++ #
++ # Normal rules
++ #
++ .*
++ *.o
++ *.o.*
++ *.a
++ *.s
++ *.ko
++ *.ko.unsigned
++ *.ko.digest
++ *.ko.digest.sig
++ *.so
++ *.so.dbg
++ *.mod.c
++ *.i
++ *.lst
++ *.symtypes
++ *.order
++ modules.builtin
++ *.elf
++ *.bin
++ *.gz
++ *.bz2
++ *.lzma
++ *.xz
++ *.lzo
++ *.patch
++ *.gcno
++ 
++ #
++ # Top-level generic files
++ #
++ /tags
++ /TAGS
++ /linux
++ /vmlinux
++ /vmlinuz
++ /System.map
++ /Module.markers
++ /Module.symvers
++ 
++ #
++ # Debian directory (make deb-pkg)
++ #
++ /debian/
++ 
++ #
++ # git files that we don't want to ignore even it they are dot-files
++ #
++ !.gitignore
++ !.mailmap
++ 
++ #
++ # Generated include files
++ #
++ include/config
++ include/generated
++ arch/*/include/generated
++ 
++ # stgit generated dirs
++ patches-*
++ 
++ # quilt's files
++ patches
++ series
++ 
++ # cscope files
++ cscope.*
++ ncscope.*
++ 
++ # gnu global files
++ GPATH
++ GRTAGS
++ GSYMS
++ GTAGS
++ 
++ *.orig
++ *~
++ \#*#
++ 
++ #
++ # Leavings from module signing
++ #
++ extra_certificates
++ signing_key.priv
++ signing_key.x509
++ x509.genkey
++ 
++ #
++ # Red Hat
++ #
++ configs/*.config
++ localversion
++ 
++ # configuration file for rh- targets
++ .rhel7git.mk
++ 
++ # Red Hat key security
++ kernel/x509_certificate_list
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/include/linux/dcache.h linux-3.10.0-327.28.3.el7_FOR_PATCH/include/linux/dcache.h
+*** linux-3.10.0-327.28.3.el7_RAW/include/linux/dcache.h	2016-08-12 22:33:30.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/include/linux/dcache.h	2017-10-02 13:00:02.258074444 +0700
+***************
+*** 211,222 ****
+  #define DCACHE_LRU_LIST		0x80000
+  #define DCACHE_DENTRY_KILLED	0x100000
+  
+! #define DCACHE_ENTRY_TYPE		0x07000000
+  #define DCACHE_MISS_TYPE		0x00000000 /* Negative dentry */
+  #define DCACHE_DIRECTORY_TYPE		0x01000000 /* Normal directory */
+  #define DCACHE_AUTODIR_TYPE		0x02000000 /* Lookupless directory (presumed automount) */
+  #define DCACHE_SYMLINK_TYPE		0x03000000 /* Symlink */
+  #define DCACHE_FILE_TYPE		0x04000000 /* Other file type */
+  
+  extern seqlock_t rename_lock;
+  
+--- 211,223 ----
+  #define DCACHE_LRU_LIST		0x80000
+  #define DCACHE_DENTRY_KILLED	0x100000
+  
+! #define DCACHE_ENTRY_TYPE		0x0F000000
+  #define DCACHE_MISS_TYPE		0x00000000 /* Negative dentry */
+  #define DCACHE_DIRECTORY_TYPE		0x01000000 /* Normal directory */
+  #define DCACHE_AUTODIR_TYPE		0x02000000 /* Lookupless directory (presumed automount) */
+  #define DCACHE_SYMLINK_TYPE		0x03000000 /* Symlink */
+  #define DCACHE_FILE_TYPE		0x04000000 /* Other file type */
++ #define DCACHE_CHAIN_TEMP		0X08000000 /* temp dentry for walk_chain */
+  
+  extern seqlock_t rename_lock;
+  
+***************
+*** 444,449 ****
+--- 445,455 ----
+  	return __d_entry_type(dentry) == DCACHE_SYMLINK_TYPE;
+  }
+  
++ static inline bool d_is_chain_temp(const struct dentry *dentry)
++ {
++ 	return __d_entry_type(dentry) == DCACHE_CHAIN_TEMP;
++ }
++ 
+  static inline bool d_is_file(const struct dentry *dentry)
+  {
+  	return __d_entry_type(dentry) == DCACHE_FILE_TYPE;
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/include/linux/fs.h linux-3.10.0-327.28.3.el7_FOR_PATCH/include/linux/fs.h
+*** linux-3.10.0-327.28.3.el7_RAW/include/linux/fs.h	2016-08-12 22:33:30.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/include/linux/fs.h	2017-10-02 13:00:02.332074651 +0700
+***************
+*** 1651,1662 ****
+  	struct file_operations kabi_fops;
+  	void (*mremap)(struct file *, struct vm_area_struct *);
+  };
+! 
+  #define to_fop_extend(fop)	\
+  	container_of((fop), struct file_operations_extend, kabi_fops)
+  
+  struct inode_operations {
+  	struct dentry * (*lookup) (struct inode *,struct dentry *, unsigned int);
+  	void * (*follow_link) (struct dentry *, struct nameidata *);
+  	int (*permission) (struct inode *, int);
+  	struct posix_acl * (*get_acl)(struct inode *, int);
+--- 1651,1668 ----
+  	struct file_operations kabi_fops;
+  	void (*mremap)(struct file *, struct vm_area_struct *);
+  };
+! struct chain_dentry{
+! 	struct dentry *dentry;
+! 	struct qstr name;
+! 	struct list_head list;
+! };
+  #define to_fop_extend(fop)	\
+  	container_of((fop), struct file_operations_extend, kabi_fops)
+  
+  struct inode_operations {
+  	struct dentry * (*lookup) (struct inode *,struct dentry *, unsigned int);
++ 	
++ 
+  	void * (*follow_link) (struct dentry *, struct nameidata *);
+  	int (*permission) (struct inode *, int);
+  	struct posix_acl * (*get_acl)(struct inode *, int);
+***************
+*** 1685,1690 ****
+--- 1691,1700 ----
+  	int (*atomic_open)(struct inode *, struct dentry *,
+  			   struct file *, unsigned open_flag,
+  			   umode_t create_mode, int *opened);
++ 	int (*chain_lookup) (struct nameidata *);
++ 	int (*chain_lookup_open) (struct nameidata *, struct dentry *,
++ 			   struct file *, unsigned open_flag,
++ 			   umode_t create_mode, int *opened);
+  } ____cacheline_aligned;
+  
+  
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/include/linux/namei.h linux-3.10.0-327.28.3.el7_FOR_PATCH/include/linux/namei.h
+*** linux-3.10.0-327.28.3.el7_RAW/include/linux/namei.h	2016-08-12 22:33:30.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/include/linux/namei.h	2017-10-02 13:00:02.966076431 +0700
+***************
+*** 20,25 ****
+--- 20,29 ----
+  	int		last_type;
+  	unsigned	depth;
+  	char *saved_names[MAX_NESTED_LINKS + 1];
++ 
++ 	struct list_head dchain_list;
++ 	unsigned int chain_size;
++ 	struct dentry *chain_parent;
+  };
+  
+  /*
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/include/linux/nfs4.h linux-3.10.0-327.28.3.el7_FOR_PATCH/include/linux/nfs4.h
+*** linux-3.10.0-327.28.3.el7_RAW/include/linux/nfs4.h	2016-08-12 22:33:30.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/include/linux/nfs4.h	2017-10-02 13:00:03.041076642 +0700
+***************
+*** 455,460 ****
+--- 455,462 ----
+  	NFSPROC4_CLNT_GETATTR,
+  	NFSPROC4_CLNT_LOOKUP,
+  	NFSPROC4_CLNT_LOOKUP_ROOT,
++ 	NFSPROC4_CLNT_CHAIN_LOOKUP,
++ 	NFSPROC4_CLNT_CHAIN_LOOKUP_OPEN,
+  	NFSPROC4_CLNT_REMOVE,
+  	NFSPROC4_CLNT_RENAME,
+  	NFSPROC4_CLNT_LINK,
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/include/linux/nfs_fs.h linux-3.10.0-327.28.3.el7_FOR_PATCH/include/linux/nfs_fs.h
+*** linux-3.10.0-327.28.3.el7_RAW/include/linux/nfs_fs.h	2016-08-12 22:33:30.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/include/linux/nfs_fs.h	2017-10-02 13:00:03.041076642 +0700
+***************
+*** 356,361 ****
+--- 356,362 ----
+  extern int nfs_release(struct inode *, struct file *);
+  extern int nfs_attribute_timeout(struct inode *inode);
+  extern int nfs_attribute_cache_expired(struct inode *inode);
++ extern bool nfs_need_revalidate_inode(struct inode *inode);
+  extern int nfs_revalidate_inode(struct nfs_server *server, struct inode *inode);
+  extern int nfs_revalidate_inode_rcu(struct nfs_server *server, struct inode *inode);
+  extern int __nfs_revalidate_inode(struct nfs_server *, struct inode *);
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/include/linux/nfs_xdr.h linux-3.10.0-327.28.3.el7_FOR_PATCH/include/linux/nfs_xdr.h
+*** linux-3.10.0-327.28.3.el7_RAW/include/linux/nfs_xdr.h	2016-08-12 22:33:30.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/include/linux/nfs_xdr.h	2017-10-02 13:00:03.043076647 +0700
+***************
+*** 933,938 ****
+--- 933,970 ----
+  	struct nfs4_label		*label;
+  };
+  
++ struct nfs4_chain_lookup_arg {
++ 	struct nfs4_sequence_args	seq_args;
++ 	const struct nfs_fh *		dir_fh;
++ 	const struct list_head *		dchain_list;
++ 	const u32 *			bitmask;
++ };
++ 
++ struct nfs4_chain_lookup_res {
++ 	struct nfs4_sequence_res	seq_res;
++ 	const struct nfs_server *	server;
++ 	struct nfs_fattr **		fattrs;
++ 	int size;
++ 	struct nfs_fh **		fhandles;
++ 	struct nfs4_label **	labels;
++ };
++ 
++ struct nfs4_chain_lookup_open_arg {
++ 	struct nfs4_sequence_args	seq_args;
++ 	const struct nfs_fh *		dir_fh;
++ 	const struct list_head *		dchain_list;
++ 	const u32 *			bitmask;
++ };
++ 
++ struct nfs4_chain_lookup_open_res {
++ 	struct nfs4_sequence_res	seq_res;
++ 	const struct nfs_server *	server;
++ 	struct nfs_fattr **		fattrs;
++ 	int size;
++ 	struct nfs_fh **		fhandles;
++ 	struct nfs4_label **	labels;
++ };
++ 
+  struct nfs4_lookup_root_arg {
+  	struct nfs4_sequence_args	seq_args;
+  	const u32 *			bitmask;
+***************
+*** 1441,1446 ****
+--- 1473,1484 ----
+  	int	(*lookup)  (struct inode *, struct qstr *,
+  			    struct nfs_fh *, struct nfs_fattr *,
+  			    struct nfs4_label *);
++ 	int	(*chain_lookup)  (struct inode *, struct list_head *,
++ 			    struct nfs_fh **, struct nfs_fattr **,
++ 			    struct nfs4_label **, int size);
++ 	int	(*chain_lookup_open)  (struct inode *, struct list_head *,
++ 			    struct nfs_fh **, struct nfs_fattr **,
++ 			    struct nfs4_label **, int size);
+  	int	(*access)  (struct inode *, struct nfs_access_entry *);
+  	int	(*readlink)(struct inode *, struct page *, unsigned int,
+  			    unsigned int);
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/include/uapi/linux/nfs4.h linux-3.10.0-327.28.3.el7_FOR_PATCH/include/uapi/linux/nfs4.h
+*** linux-3.10.0-327.28.3.el7_RAW/include/uapi/linux/nfs4.h	2016-08-12 22:33:30.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/include/uapi/linux/nfs4.h	2017-10-02 13:00:04.597081010 +0700
+***************
+*** 155,161 ****
+  /* An NFS4 sessions server must support at least NFS4_MAX_OPS operations.
+   * If a compound requires more operations, adjust NFS4_MAX_OPS accordingly.
+   */
+! #define NFS4_MAX_OPS   8
+  
+  /* Our NFS4 client back channel server only wants the cb_sequene and the
+   * actual operation per compound
+--- 155,161 ----
+  /* An NFS4 sessions server must support at least NFS4_MAX_OPS operations.
+   * If a compound requires more operations, adjust NFS4_MAX_OPS accordingly.
+   */
+! #define NFS4_MAX_OPS   100
+  
+  /* Our NFS4 client back channel server only wants the cb_sequene and the
+   * actual operation per compound
+Binary files linux-3.10.0-327.28.3.el7_RAW/kernel/x509_certificate_list and linux-3.10.0-327.28.3.el7_FOR_PATCH/kernel/x509_certificate_list differ
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/kernel/.x509.list linux-3.10.0-327.28.3.el7_FOR_PATCH/kernel/.x509.list
+*** linux-3.10.0-327.28.3.el7_RAW/kernel/.x509.list	1970-01-01 07:00:00.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/kernel/.x509.list	2017-10-02 13:00:10.371097219 +0700
+***************
+*** 0 ****
+--- 1 ----
++ /DATA/linux-3.10.0-327.28.3.el7/signing_key.x509
+diff -rcNP linux-3.10.0-327.28.3.el7_RAW/.mailmap linux-3.10.0-327.28.3.el7_FOR_PATCH/.mailmap
+*** linux-3.10.0-327.28.3.el7_RAW/.mailmap	1970-01-01 07:00:00.000000000 +0700
+--- linux-3.10.0-327.28.3.el7_FOR_PATCH/.mailmap	2017-10-02 12:53:29.731970987 +0700
+***************
+*** 0 ****
+--- 1,118 ----
++ #
++ # This list is used by git-shortlog to fix a few botched name translations
++ # in the git archive, either because the author's full name was messed up
++ # and/or not always written the same way, making contributions from the
++ # same person appearing not to be so or badly displayed.
++ #
++ # repo-abbrev: /pub/scm/linux/kernel/git/
++ #
++ 
++ Aaron Durbin <adurbin@google.com>
++ Adam Oldham <oldhamca@gmail.com>
++ Adam Radford <aradford@gmail.com>
++ Adrian Bunk <bunk@stusta.de>
++ Alan Cox <alan@lxorguk.ukuu.org.uk>
++ Alan Cox <root@hraefn.swansea.linux.org.uk>
++ Aleksey Gorelov <aleksey_gorelov@phoenix.com>
++ Al Viro <viro@ftp.linux.org.uk>
++ Al Viro <viro@zenIV.linux.org.uk>
++ Andreas Herrmann <aherrman@de.ibm.com>
++ Andrew Morton <akpm@osdl.org>
++ Andrew Vasquez <andrew.vasquez@qlogic.com>
++ Andy Adamson <andros@citi.umich.edu>
++ Archit Taneja <archit@ti.com>
++ Arnaud Patard <arnaud.patard@rtp-net.org>
++ Arnd Bergmann <arnd@arndb.de>
++ Axel Dyks <xl@xlsigned.net>
++ Axel Lin <axel.lin@gmail.com>
++ Ben Gardner <bgardner@wabtec.com>
++ Ben M Cahill <ben.m.cahill@intel.com>
++ Björn Steinbrink <B.Steinbrink@gmx.de>
++ Brian Avery <b.avery@hp.com>
++ Brian King <brking@us.ibm.com>
++ Christoph Hellwig <hch@lst.de>
++ Corey Minyard <minyard@acm.org>
++ Damian Hobson-Garcia <dhobsong@igel.co.jp>
++ David Brownell <david-b@pacbell.net>
++ David Woodhouse <dwmw2@shinybook.infradead.org>
++ Dmitry Eremin-Solenikov <dbaryshkov@gmail.com>
++ Domen Puncer <domen@coderock.org>
++ Douglas Gilbert <dougg@torque.net>
++ Ed L. Cashin <ecashin@coraid.com>
++ Evgeniy Polyakov <johnpol@2ka.mipt.ru>
++ Felipe W Damasio <felipewd@terra.com.br>
++ Felix Kuhling <fxkuehl@gmx.de>
++ Felix Moeller <felix@derklecks.de>
++ Filipe Lautert <filipe@icewall.org>
++ Franck Bui-Huu <vagabon.xyz@gmail.com>
++ Frank Zago <fzago@systemfabricworks.com>
++ Greg Kroah-Hartman <greg@echidna.(none)>
++ Greg Kroah-Hartman <gregkh@suse.de>
++ Greg Kroah-Hartman <greg@kroah.com>
++ Henk Vergonet <Henk.Vergonet@gmail.com>
++ Henrik Kretzschmar <henne@nachtwindheim.de>
++ Herbert Xu <herbert@gondor.apana.org.au>
++ Jacob Shin <Jacob.Shin@amd.com>
++ James Bottomley <jejb@mulgrave.(none)>
++ James Bottomley <jejb@titanic.il.steeleye.com>
++ James E Wilson <wilson@specifix.com>
++ James Ketrenos <jketreno@io.(none)>
++ Jean Tourrilhes <jt@hpl.hp.com>
++ Jeff Garzik <jgarzik@pretzel.yyz.us>
++ Jens Axboe <axboe@suse.de>
++ Jens Osterkamp <Jens.Osterkamp@de.ibm.com>
++ John Stultz <johnstul@us.ibm.com>
++ Juha Yrjola <at solidboot.com>
++ Juha Yrjola <juha.yrjola@nokia.com>
++ Juha Yrjola <juha.yrjola@solidboot.com>
++ Kay Sievers <kay.sievers@vrfy.org>
++ Kenneth W Chen <kenneth.w.chen@intel.com>
++ Koushik <raghavendra.koushik@neterion.com>
++ Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
++ Leonid I Ananiev <leonid.i.ananiev@intel.com>
++ Linas Vepstas <linas@austin.ibm.com>
++ Mark Brown <broonie@sirena.org.uk>
++ Matthieu CASTET <castet.matthieu@free.fr>
++ Mayuresh Janorkar <mayur@ti.com>
++ Michael Buesch <m@bues.ch>
++ Michel Dänzer <michel@tungstengraphics.com>
++ Mitesh shah <mshah@teja.com>
++ Morten Welinder <terra@gnome.org>
++ Morten Welinder <welinder@anemone.rentec.com>
++ Morten Welinder <welinder@darter.rentec.com>
++ Morten Welinder <welinder@troll.com>
++ Mythri P K <mythripk@ti.com>
++ Nguyen Anh Quynh <aquynh@gmail.com>
++ Paolo 'Blaisorblade' Giarrusso <blaisorblade@yahoo.it>
++ Patrick Mochel <mochel@digitalimplant.org>
++ Peter A Jonsson <pj@ludd.ltu.se>
++ Peter Oruba <peter@oruba.de>
++ Peter Oruba <peter.oruba@amd.com>
++ Praveen BP <praveenbp@ti.com>
++ Rajesh Shah <rajesh.shah@intel.com>
++ Ralf Baechle <ralf@linux-mips.org>
++ Ralf Wildenhues <Ralf.Wildenhues@gmx.de>
++ Rémi Denis-Courmont <rdenis@simphalempin.com>
++ Rudolf Marek <R.Marek@sh.cvut.cz>
++ Rui Saraiva <rmps@joel.ist.utl.pt>
++ Sachin P Sant <ssant@in.ibm.com>
++ Sam Ravnborg <sam@mars.ravnborg.org>
++ Sascha Hauer <s.hauer@pengutronix.de>
++ S.Çağlar Onur <caglar@pardus.org.tr>
++ Simon Kelley <simon@thekelleys.org.uk>
++ Stéphane Witzmann <stephane.witzmann@ubpmes.univ-bpclermont.fr>
++ Stephen Hemminger <shemminger@osdl.org>
++ Sumit Semwal <sumit.semwal@ti.com>
++ Tejun Heo <htejun@gmail.com>
++ Thomas Graf <tgraf@suug.ch>
++ Tony Luck <tony.luck@intel.com>
++ Tsuneo Yoshioka <Tsuneo.Yoshioka@f-secure.com>
++ Uwe Kleine-König <ukleinek@informatik.uni-freiburg.de>
++ Uwe Kleine-König <ukl@pengutronix.de>
++ Uwe Kleine-König <Uwe.Kleine-Koenig@digi.com>
++ Valdis Kletnieks <Valdis.Kletnieks@vt.edu>
++ Viresh Kumar <viresh.linux@gmail.com> <viresh.kumar@st.com>
++ Takashi YOSHII <takashi.yoshii.zj@renesas.com>
++ Yusuke Goda <goda.yusuke@renesas.com>
++ Gustavo Padovan <gustavo@las.ic.unicamp.br>
++ Gustavo Padovan <padovan@profusion.mobi>
